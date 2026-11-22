@@ -320,7 +320,7 @@ class DownloadButton extends StatelessWidget {
   }
 
   bool _samePath(String a, String b) {
-    final String norm(String s) => s.replaceAll('\\', '/').toLowerCase();
+    String norm(String s) => s.replaceAll('\\', '/').toLowerCase();
     return norm(a) == norm(b);
   }
 
