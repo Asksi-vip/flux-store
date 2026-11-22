@@ -97,7 +97,7 @@ class LibraryScreen extends StatelessWidget {
       direction: DismissDirection.endToStart,
       onDismissed: (_) => library.remove(game.id),
       background: Container(
-        alignment: Alignment.centerEnd,
+        alignment: AlignmentDirectional.centerEnd,
         padding: const EdgeInsets.only(left: 24),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'screens/splash_screen.dart';
+import 'theme/app_theme.dart';
 
 /// نقطة انطلاق تطبيق Flux — متجر الألعاب النيوني.
 void main() {
