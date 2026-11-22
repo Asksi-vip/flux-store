@@ -168,7 +168,7 @@ jobs:
                           .setSmallIcon(android.R.drawable.stat_sys_download)
                           .setOngoing(true)
                           .setOnlyAlertOnce(true)
-                      if (progressText.isNotEmpty) style.setContentText(progressText)
+                      if (progressText != "") style.setContentText(progressText)
                       if (progress != null && progress > 0) {
                           style.setProgress(100, (progress * 100).toInt(), false)
                       } else {
