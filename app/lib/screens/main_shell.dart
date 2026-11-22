@@ -3,8 +3,10 @@ import 'package:flutter/services.dart';
 
 import '../controllers/library_controller.dart';
 import '../models/game.dart';
+import '../services/download_manager.dart';
 import '../theme/app_theme.dart';
 import '../widgets/page_fade_transition.dart';
+import 'downloads_screen.dart';
 import 'game_details_screen.dart';
 import 'home_screen.dart';
 import 'library_screen.dart';
@@ -28,15 +30,23 @@ class _MainShellState extends State<MainShell> {
     Icons.storefront_rounded,
     Icons.search_rounded,
     Icons.video_library_rounded,
+    Icons.download_rounded,
     Icons.person_rounded,
   ];
 
-  static const List<String> _labels = ['المتجر', 'البحث', 'المكتبة', 'حسابي'];
+  static const List<String> _labels = [
+    'المتجر',
+    'البحث',
+    'المكتبة',
+    'التنزيلات',
+    'حسابي',
+  ];
 
   static const List<String> _titles = [
     'متجر FLUX',
     'تصفح الألعاب',
     'مكتبتي',
+    'التنزيلات',
     'حسابي',
   ];
 
@@ -106,10 +116,14 @@ class _MainShellState extends State<MainShell> {
             controller: widget.controller,
             onBrowse: () => _setTab(0),
           ),
+          const DownloadsScreen(),
           ProfileScreen(controller: widget.controller),
         ],
       ),
-      bottomNavigationBar: _bottomNav(),
+      bottomNavigationBar: ListenableBuilder(
+        listenable: DownloadManager.instance,
+        builder: (context, _) => _bottomNav(),
+      ),
     );
   }
 
@@ -129,6 +143,37 @@ class _MainShellState extends State<MainShell> {
         ),
       ),
     );
+  }
+
+  /// أيقونة التبويب — تبويب التنزيلات يظهر عليه نقطة زرقاء عند وجود تنزيلات نشطة.
+  Widget _navIcon(int i, bool selected) {
+    final Widget icon = Icon(
+      _icons[i],
+      size: 22,
+      color: selected ? EpicColors.textPrimary : EpicColors.textSecondary,
+    );
+    if (i == 3 && DownloadManager.instance.hasActive) {
+      return Stack(
+        clipBehavior: Clip.none,
+        children: [
+          icon,
+          Positioned(
+            top: -2,
+            left: -4,
+            child: Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                color: EpicColors.blue,
+                shape: BoxShape.circle,
+                border: Border.all(color: EpicColors.surface, width: 1.5),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+    return icon;
   }
 
   Widget _navItem(int i) {
@@ -159,13 +204,7 @@ class _MainShellState extends State<MainShell> {
               scale: selected ? 1.12 : 1,
               duration: const Duration(milliseconds: 200),
               curve: Curves.easeOut,
-              child: Icon(
-                _icons[i],
-                size: 22,
-                color: selected
-                    ? EpicColors.textPrimary
-                    : EpicColors.textSecondary,
-              ),
+              child: _navIcon(i, selected),
             ),
             const SizedBox(height: 4),
             Text(

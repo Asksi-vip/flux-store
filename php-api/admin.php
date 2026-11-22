@@ -58,7 +58,9 @@ if ($logged && $pdo !== null && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($
                     'UPDATE games SET name = :name, description = :description, price = :price,
                      discount_price = :discount_price, category = :category, rating = :rating,
                      image_url = :image_url, banner_url = :banner_url,
-                     release_date = :release_date, is_featured = :is_featured WHERE id = :id'
+                     release_date = :release_date, is_featured = :is_featured,
+                     package_name = :package_name, download_version = :download_version,
+                     download_version_code = :download_version_code WHERE id = :id'
                 );
                 $params = flux_prefix_params($fields);
                 $params[':id'] = $id;
@@ -68,9 +70,11 @@ if ($logged && $pdo !== null && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($
                 try {
                     $stmt = $pdo->prepare(
                         'INSERT INTO games (name, description, price, discount_price, category, rating,
-                         image_url, banner_url, release_date, is_featured)
+                         image_url, banner_url, release_date, is_featured,
+                         package_name, download_version, download_version_code)
                          VALUES (:name, :description, :price, :discount_price, :category, :rating,
-                         :image_url, :banner_url, :release_date, :is_featured)'
+                         :image_url, :banner_url, :release_date, :is_featured,
+                         :package_name, :download_version, :download_version_code)'
                     );
                     $stmt->execute(flux_prefix_params($fields));
                     $msg = 'تمت إضافة اللعبة بنجاح';
@@ -88,8 +92,54 @@ if ($logged && $pdo !== null && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($
         if ($id > 0) {
             $stmt = $pdo->prepare('DELETE FROM games WHERE id = :id');
             $stmt->execute(array(':id' => $id));
+            $stmt = $pdo->prepare('DELETE FROM game_files WHERE game_id = :id');
+            $stmt->execute(array(':id' => $id));
         }
         header('Location: admin.php?msg=' . urlencode('تم حذف اللعبة'));
+        exit;
+    }
+
+    // ---------- عمليات ملفات التحميل (APK / OBB / Data) ----------
+    if ($action === 'save_file') {
+        $gid   = (int) (isset($_POST['game_id']) ? $_POST['game_id'] : 0);
+        $fid   = (int) (isset($_POST['file_id']) ? $_POST['file_id'] : 0);
+        $type  = (string) (isset($_POST['type']) ? $_POST['type'] : 'apk');
+        if (!in_array($type, array('apk', 'obb', 'data'), true)) {
+            $type = 'apk';
+        }
+        $fName = trim((string) (isset($_POST['file_name']) ? $_POST['file_name'] : ''));
+        $fUrl  = trim((string) (isset($_POST['file_url']) ? $_POST['file_url'] : ''));
+        $fSize = (int) round(((float) (isset($_POST['size_mb']) && $_POST['size_mb'] !== '' ? $_POST['size_mb'] : 0)) * 1024 * 1024);
+        $fVc   = (int) (isset($_POST['version_code']) && $_POST['version_code'] !== '' ? $_POST['version_code'] : 0);
+
+        if ($gid <= 0 || $fUrl === '') {
+            $error = 'رابط الملف مطلوب';
+        } else {
+            if ($fName === '') {
+                $fName = $type === 'apk' ? 'ملف تثبيت اللعبة APK' : ($type === 'obb' ? 'ملف البيانات OBB' : 'ملفات إضافية Data');
+            }
+            if ($fid > 0) {
+                $stmt = $pdo->prepare('UPDATE game_files SET name = :name, url = :url, type = :type, size = :size, version_code = :vc WHERE id = :id');
+                $stmt->execute(array(':name' => $fName, ':url' => $fUrl, ':type' => $type, ':size' => $fSize, ':vc' => $fVc, ':id' => $fid));
+                $msg = 'تم تحديث الملف';
+            } else {
+                $stmt = $pdo->prepare('INSERT INTO game_files (game_id, name, url, type, size, version_code) VALUES (:gid, :name, :url, :type, :size, :vc)');
+                $stmt->execute(array(':gid' => $gid, ':name' => $fName, ':url' => $fUrl, ':type' => $type, ':size' => $fSize, ':vc' => $fVc));
+                $msg = 'تمت إضافة الملف';
+            }
+            header('Location: admin.php?files=' . $gid . '&msg=' . urlencode($msg));
+            exit;
+        }
+    }
+
+    if ($action === 'delete_file') {
+        $fid = (int) (isset($_POST['file_id']) ? $_POST['file_id'] : 0);
+        $gid = (int) (isset($_POST['game_id']) ? $_POST['game_id'] : 0);
+        if ($fid > 0) {
+            $stmt = $pdo->prepare('DELETE FROM game_files WHERE id = :id');
+            $stmt->execute(array(':id' => $fid));
+        }
+        header('Location: admin.php?files=' . $gid . '&msg=' . urlencode('تم حذف الملف'));
         exit;
     }
 }
@@ -112,10 +162,42 @@ if ($logged && $pdo !== null && isset($_GET['edit'])) {
 }
 
 $games = array();
+$filesCountMap = array();
 if ($logged && $pdo !== null) {
     $games = $pdo->query('SELECT * FROM games ORDER BY id DESC')->fetchAll();
+    // عدد ملفات التحميل لكل لعبة (لعرضه في الجدول)
+    foreach ($pdo->query('SELECT game_id, COUNT(*) AS c FROM game_files GROUP BY game_id')->fetchAll() as $r) {
+        $filesCountMap[(int) $r['game_id']] = (int) $r['c'];
+    }
 }
 $categories = flux_categories();
+
+// ---------- صفحة إدارة ملفات لعبة معينة (?files=<id>) ----------
+$filesGame = null;
+$gameFiles = array();
+$editFile  = null;
+if ($logged && $pdo !== null && isset($_GET['files'])) {
+    $fgid = (int) $_GET['files'];
+    if ($fgid > 0) {
+        $stmt = $pdo->prepare('SELECT * FROM games WHERE id = :id');
+        $stmt->execute(array(':id' => $fgid));
+        $filesGame = $stmt->fetch() ?: null;
+        if ($filesGame) {
+            $stmt = $pdo->prepare('SELECT * FROM game_files WHERE game_id = :gid ORDER BY id ASC');
+            $stmt->execute(array(':gid' => $fgid));
+            $gameFiles = $stmt->fetchAll();
+        }
+    }
+    if (isset($_GET['edit_file'])) {
+        $efid = (int) $_GET['edit_file'];
+        foreach ($gameFiles as $gf) {
+            if ((int) $gf['id'] === $efid) {
+                $editFile = $gf;
+                break;
+            }
+        }
+    }
+}
 
 /** هروب آمن لأي قيمة تُطبع في HTML. */
 function e($v)
@@ -190,6 +272,7 @@ function e($v)
             <div class="card">لا يمكن الاتصال بقاعدة البيانات.</div>
         <?php } else { ?>
 
+            <?php if ($filesGame === null) { ?>
             <!-- نموذج الإضافة/التعديل -->
             <div class="card">
                 <h2 style="font-size:16px; margin-bottom:4px;">
@@ -238,6 +321,21 @@ function e($v)
                     <label>رابط صورة البانر (عريضة library_hero)</label>
                     <input type="url" name="banner_url" value="<?php echo $editGame ? e($editGame['banner_url']) : ''; ?>">
 
+                    <div class="row">
+                        <div>
+                            <label>حزمة أندرويد (لمسارات OBB/Data — مثل com.company.game)</label>
+                            <input type="text" name="package_name" value="<?php echo $editGame ? e($editGame['package_name']) : ''; ?>">
+                        </div>
+                        <div>
+                            <label>إصدار التحميل (نص مثل 2.4.1)</label>
+                            <input type="text" name="download_version" value="<?php echo $editGame ? e($editGame['download_version']) : ''; ?>">
+                        </div>
+                        <div>
+                            <label>رقم الإصدار (لتسمية OBB تلقائيًا)</label>
+                            <input type="number" min="0" name="download_version_code" value="<?php echo $editGame ? e($editGame['download_version_code']) : '0'; ?>">
+                        </div>
+                    </div>
+
                     <div class="check">
                         <input type="checkbox" name="is_featured" value="1" id="feat" <?php echo ($editGame && (int) $editGame['is_featured'] === 1) ? 'checked' : ''; ?>>
                         <label for="feat" style="margin:0;">لعبة مميزة (تظهر في البانر السينمائي)</label>
@@ -247,7 +345,90 @@ function e($v)
                     <?php if ($editGame) { ?><a class="btn btn-ghost" href="admin.php" style="text-decoration:none;">إلغاء التعديل</a><?php } ?>
                 </form>
             </div>
+            <?php } ?>
 
+            <?php if ($filesGame !== null) { ?>
+            <!-- ============ صفحة إدارة ملفات التحميل (APK / OBB / Data) ============ -->
+            <div class="card">
+                <h2 style="font-size:16px; margin-bottom:4px;">ملفات التحميل: <?php echo e($filesGame['name']); ?></h2>
+                <p class="sub" style="margin-bottom:12px;">أول ملف APK = ملف اللعبة الرئيسي، وملفات OBB/Data تُحسب مسارات تثبيتها تلقائيًا حسب حزمة اللعبة.</p>
+                <a class="btn btn-ghost" href="admin.php" style="text-decoration:none; margin:0;">← رجوع لقائمة الألعاب</a>
+
+                <h3 style="font-size:14px; margin:18px 0 8px;"><?php echo $editFile ? 'تعديل الملف' : 'إضافة ملف تحميل'; ?></h3>
+                <form method="post" action="admin.php">
+                    <input type="hidden" name="action" value="save_file">
+                    <input type="hidden" name="game_id" value="<?php echo (int) $filesGame['id']; ?>">
+                    <input type="hidden" name="file_id" value="<?php echo $editFile ? (int) $editFile['id'] : 0; ?>">
+                    <div class="row">
+                        <div style="flex:0 0 110px;">
+                            <label>النوع *</label>
+                            <select name="type">
+                                <option value="apk" <?php echo (!$editFile || $editFile['type'] === 'apk') ? 'selected' : ''; ?>>APK</option>
+                                <option value="obb" <?php echo ($editFile && $editFile['type'] === 'obb') ? 'selected' : ''; ?>>OBB</option>
+                                <option value="data" <?php echo ($editFile && $editFile['type'] === 'data') ? 'selected' : ''; ?>>Data</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label>اسم الملف (للعرض)</label>
+                            <input type="text" name="file_name" value="<?php echo $editFile ? e($editFile['name']) : ''; ?>">
+                        </div>
+                        <div>
+                            <label>رابط التحميل المباشر *</label>
+                            <input type="url" name="file_url" required value="<?php echo $editFile ? e($editFile['url']) : ''; ?>">
+                        </div>
+                        <div style="flex:0 0 140px;">
+                            <label>الحجم (ميغابايت)</label>
+                            <input type="number" step="0.01" min="0" name="size_mb" value="<?php echo $editFile ? e(number_format($editFile['size'] / 1048576, 2, '.', '')) : ''; ?>">
+                        </div>
+                        <div style="flex:0 0 150px;">
+                            <label>رقم إصدار OBB (لتسمية الملف)</label>
+                            <input type="number" min="0" name="version_code" value="<?php echo $editFile ? e($editFile['version_code']) : '0'; ?>">
+                        </div>
+                    </div>
+                    <button class="btn" type="submit"><?php echo $editFile ? 'حفظ الملف' : 'إضافة الملف'; ?></button>
+                    <?php if ($editFile) { ?><a class="btn btn-ghost" href="admin.php?files=<?php echo (int) $filesGame['id']; ?>" style="text-decoration:none;">إلغاء</a><?php } ?>
+                </form>
+            </div>
+
+            <div class="card">
+                <h2 style="font-size:16px; margin-bottom:12px;">ملفات اللعبة (<?php echo count($gameFiles); ?>)</h2>
+                <div style="overflow-x:auto;">
+                <table>
+                    <tr>
+                        <th>النوع</th>
+                        <th>الاسم</th>
+                        <th>الحجم</th>
+                        <th>مسار التثبيت المحسوب تلقائيًا</th>
+                        <th>إجراءات</th>
+                    </tr>
+                    <?php foreach ($gameFiles as $f) {
+                        $fPath = flux_install_path($f['type'], $filesGame['package_name'], $f['version_code'], $f['url']);
+                    ?>
+                    <tr>
+                        <td><span class="tag"><?php echo strtoupper(e($f['type'])); ?></span></td>
+                        <td><?php echo e($f['name']); ?></td>
+                        <td><?php echo (int) $f['size'] > 0 ? e(number_format($f['size'] / 1048576, 1)) . ' MB' : '—'; ?></td>
+                        <td style="font-size:11px; direction:ltr; text-align:left; color:#26bbff;"><?php echo $fPath !== '' ? e($fPath) : 'تثبيت مباشر عبر مثبت النظام'; ?></td>
+                        <td>
+                            <div class="actions">
+                                <a class="btn-edit" href="admin.php?files=<?php echo (int) $filesGame['id']; ?>&edit_file=<?php echo (int) $f['id']; ?>">تعديل</a>
+                                <form method="post" action="admin.php" onsubmit="return confirm('حذف هذا الملف؟');">
+                                    <input type="hidden" name="action" value="delete_file">
+                                    <input type="hidden" name="file_id" value="<?php echo (int) $f['id']; ?>">
+                                    <input type="hidden" name="game_id" value="<?php echo (int) $filesGame['id']; ?>">
+                                    <button class="btn-danger" type="submit">حذف</button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                    <?php } ?>
+                    <?php if (empty($gameFiles)) { ?>
+                    <tr><td colspan="5" style="color:#b8b8c1;">لا توجد ملفات بعد — أضف ملف APK حتى تصبح اللعبة قابلة للتحميل داخل التطبيق (للألعاب المجانية).</td></tr>
+                    <?php } ?>
+                </table>
+                </div>
+            </div>
+            <?php } else { ?>
             <!-- جدول الألعاب -->
             <div class="card">
                 <h2 style="font-size:16px; margin-bottom:12px;">الألعاب (<?php echo count($games); ?>)</h2>
@@ -291,6 +472,7 @@ function e($v)
                         <td>
                             <div class="actions">
                                 <a class="btn-edit" href="admin.php?edit=<?php echo (int) $g['id']; ?>">تعديل</a>
+                                <a class="btn-edit" href="admin.php?files=<?php echo (int) $g['id']; ?>" style="color:#2fbf71;">الملفات<?php echo isset($filesCountMap[(int) $g['id']]) ? ' (' . $filesCountMap[(int) $g['id']] . ')' : ''; ?></a>
                                 <form method="post" action="admin.php" onsubmit="return confirm('تأكيد حذف: <?php echo e($g['name']); ?> ؟');">
                                     <input type="hidden" name="action" value="delete">
                                     <input type="hidden" name="id" value="<?php echo (int) $g['id']; ?>">
@@ -303,6 +485,7 @@ function e($v)
                 </table>
                 </div>
             </div>
+            <?php } ?>
 
             <a class="btn btn-ghost" href="?logout=1" style="text-decoration:none;">تسجيل الخروج</a>
         <?php } ?>

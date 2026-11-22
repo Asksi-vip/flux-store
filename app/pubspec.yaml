@@ -1,5 +1,5 @@
 name: flux_store
-description: "Flux — متجر ألعاب بأسلوب Epic Games Store، متصل بـ Django REST API."
+description: "Flux — متجر ألعاب بأسلوب Epic Games Store، متصل بـ PHP API مع تحميلات حقيقية داخل التطبيق."
 publish_to: "none"
 version: 1.0.0+1
 
@@ -9,10 +9,14 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  # الاتصال بالـ API
+  # الاتصال بالـ API + تحميل الملفات (مع استئناف Range)
   dio: ^5.4.0
-  # حفظ المكتبة محليًا على الجهاز
+  # حفظ المكتبة وحالة التحميلات محليًا على الجهاز
   shared_preferences: ^2.2.2
+  # مجلدات التخزين لملفات التحميل (APK / OBB / Data)
+  path_provider: ^2.1.1
+  # طلب صلاحيات التخزين قبل التحميل
+  permission_handler: ^11.0.1
 
   cupertino_icons: ^1.0.6
 

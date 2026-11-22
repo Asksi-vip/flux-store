@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import '../controllers/library_controller.dart';
 import '../models/game.dart';
 import '../services/api_service.dart';
+import '../services/download_manager.dart';
 import '../theme/app_theme.dart';
+import '../widgets/download_button.dart';
 import '../widgets/epic_button.dart';
 import '../widgets/game_card.dart';
 import '../widgets/page_fade_transition.dart';
@@ -189,26 +191,39 @@ class _GameDetailsScreenState extends State<GameDetailsScreen> {
                           ),
                         );
                       },
-                      child: inLibrary
+                      child: game.isDownloadable
                           ? KeyedSubtree(
-                              key: const ValueKey<String>('in'),
-                              child: EpicButton(
-                                label: 'في المكتبة',
-                                variant: EpicButtonVariant.success,
-                                icon: Icons.check_circle_outline_rounded,
-                                onPressed: _toggleLibrary,
+                              key: const ValueKey<String>('dl'),
+                              child: DownloadButton(
+                                game: game,
+                                onClaim: () {
+                                  // مثل "الاستحواذ" في Epic: اللعبة تدخل المكتبة عند بدء التحميل
+                                  if (!widget.controller.contains(game.id)) {
+                                    widget.controller.add(game);
+                                  }
+                                },
                               ),
                             )
-                          : KeyedSubtree(
-                              key: const ValueKey<String>('out'),
-                              child: EpicButton(
-                                label: game.isFree
-                                    ? 'احصل عليها مجانًا'
-                                    : 'أضف إلى المكتبة',
-                                icon: Icons.add_circle_outline_rounded,
-                                onPressed: _toggleLibrary,
-                              ),
-                            ),
+                          : inLibrary
+                              ? KeyedSubtree(
+                                  key: const ValueKey<String>('in'),
+                                  child: EpicButton(
+                                    label: 'في المكتبة',
+                                    variant: EpicButtonVariant.success,
+                                    icon: Icons.check_circle_outline_rounded,
+                                    onPressed: _toggleLibrary,
+                                  ),
+                                )
+                              : KeyedSubtree(
+                                  key: const ValueKey<String>('out'),
+                                  child: EpicButton(
+                                    label: game.isFree
+                                        ? 'احصل عليها مجانًا'
+                                        : 'أضف إلى المكتبة',
+                                    icon: Icons.add_circle_outline_rounded,
+                                    onPressed: _toggleLibrary,
+                                  ),
+                                ),
                     ),
                     const SizedBox(height: 16),
                     // صف السعر مع قيمة التوفير
@@ -234,6 +249,105 @@ class _GameDetailsScreenState extends State<GameDetailsScreen> {
                         ],
                       ),
                     ),
+                    const SizedBox(height: 20),
+                    // معلومات التحميل: الإصدار، الحجم، وملفات OBB/Data بمساراتها التلقائية
+                    if (game.download != null && game.download!.available) ...[
+                      const Text(
+                        'معلومات التحميل',
+                        style: TextStyle(
+                          color: EpicColors.textPrimary,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: EpicColors.surface,
+                          border: Border.all(color: EpicColors.border),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                const Icon(
+                                  Icons.download_rounded,
+                                  color: EpicColors.cyan,
+                                  size: 18,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    game.download!.version.isNotEmpty
+                                        ? 'الإصدار ${game.download!.version}'
+                                        : 'متاحة للتحميل المباشر',
+                                    style: const TextStyle(
+                                      color: EpicColors.textPrimary,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                                Text(
+                                  formatBytes(game.download!.files.fold<int>(
+                                    0,
+                                    (int s, DownloadFile f) => s + f.size,
+                                  )),
+                                  style: const TextStyle(
+                                    color: EpicColors.cyan,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            ...game.download!.files
+                                .where((DownloadFile f) => !f.isApk)
+                                .map(
+                                  (DownloadFile f) => Padding(
+                                    padding: const EdgeInsets.only(top: 8),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          '${f.name} (${f.type.toUpperCase()} — ${formatBytes(f.size)})',
+                                          style: const TextStyle(
+                                            color: EpicColors.textSecondary,
+                                            fontSize: 11.5,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          'يُحفظ تلقائيًا في: ${f.installPath}',
+                                          style: const TextStyle(
+                                            color: EpicColors.textSecondary,
+                                            fontSize: 10,
+                                            height: 1.4,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                            const SizedBox(height: 6),
+                            const Text(
+                              'استكمال تلقائي: إذا انقطع الإنترنت أو أُغلق التطبيق، يكمل التحميل من نفس النقطة عند العودة',
+                              style: TextStyle(
+                                color: EpicColors.textSecondary,
+                                fontSize: 10.5,
+                                height: 1.5,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 20),
                     // الوصف مع إمكانية التوسيع (انتقال متحرك)
                     const Text(

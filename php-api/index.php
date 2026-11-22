@@ -69,14 +69,16 @@ if ($parts[1] === 'featured') {
 }
 
 if (ctype_digit($parts[1])) {
-    // تفاصيل لعبة واحدة
+    // تفاصيل لعبة واحدة (مع ملفات التحميل ومساراتها المحسوبة)
+    $gid = (int) $parts[1];
     $stmt = $pdo->prepare('SELECT * FROM games WHERE id = :id');
-    $stmt->execute(array(':id' => (int) $parts[1]));
+    $stmt->execute(array(':id' => $gid));
     $row = $stmt->fetch();
     if (!$row) {
         flux_json(array('detail' => 'اللعبة المطلوبة غير موجودة'), 404);
     }
-    flux_json(flux_serialize_game($row));
+    $filesMap = flux_files_for_games($pdo, array($gid));
+    flux_json(flux_serialize_game($row, isset($filesMap[$gid]) ? $filesMap[$gid] : array()));
 }
 
 // أي مسار آخر تحت /games

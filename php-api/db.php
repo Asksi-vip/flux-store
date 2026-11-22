@@ -50,12 +50,176 @@ function flux_db()
         )
     ");
 
+    // ترقية قواعد بيانات النسخ القديمة: أعمدة التحميل
+    flux_migrate($pdo);
+
+    // ملفات التحميل لكل لعبة (APK أساسي + ملفات إضافية OBB/Data مع المسار المحسوب)
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS game_files (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            game_id      INTEGER NOT NULL,
+            name         TEXT NOT NULL DEFAULT '',
+            url          TEXT NOT NULL DEFAULT '',
+            type         TEXT NOT NULL DEFAULT 'apk',
+            size         INTEGER NOT NULL DEFAULT 0,
+            version_code INTEGER NOT NULL DEFAULT 0,
+            created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    ");
+
     $count = (int) $pdo->query('SELECT COUNT(*) FROM games')->fetchColumn();
     if ($count === 0) {
         flux_seed_games($pdo);
     }
 
+    $fileCount = (int) $pdo->query('SELECT COUNT(*) FROM game_files')->fetchColumn();
+    if ($fileCount === 0) {
+        flux_seed_files($pdo);
+    }
+
     return $pdo;
+}
+
+/** إضافة أعمدة التحميل إلى قواعد بيانات النسخ القديمة (يتجاهل ما هو موجود). */
+function flux_migrate(PDO $pdo)
+{
+    $names = array();
+    foreach ($pdo->query('PRAGMA table_info(games)')->fetchAll() as $c) {
+        $names[] = $c['name'];
+    }
+    $extra = array(
+        'package_name'          => "ALTER TABLE games ADD COLUMN package_name TEXT NOT NULL DEFAULT ''",
+        'download_version'      => "ALTER TABLE games ADD COLUMN download_version TEXT NOT NULL DEFAULT ''",
+        'download_version_code' => 'ALTER TABLE games ADD COLUMN download_version_code INTEGER NOT NULL DEFAULT 0',
+    );
+    foreach ($extra as $col => $sql) {
+        if (!in_array($col, $names, true)) {
+            $pdo->exec($sql);
+        }
+    }
+}
+
+/**
+ * حساب مسار تثبيت الملف تلقائيًا وفق معايير أندرويد:
+ *   apk  ← يثبّت عبر مثبّت النظام (بلا مسار)
+ *   obb  ← /storage/emulated/0/Android/obb/<الحزمة>/main.<رقم الإصدار>.<الحزمة>.obb
+ *   data ← /storage/emulated/0/Android/data/<الحزمة>/files/<اسم الملف>
+ */
+function flux_install_path($type, $pkg, $versionCode, $url)
+{
+    $pkg = trim((string) $pkg);
+    $baseName = $url;
+    $qpos = strpos($baseName, '?');
+    $query = ($qpos !== false) ? substr($baseName, $qpos + 1) : '';
+    if ($qpos !== false) {
+        $baseName = substr($baseName, 0, $qpos);
+    }
+    $baseName = basename(str_replace('\\', '/', $baseName));
+    if ($baseName === '' || $baseName === '/') {
+        $baseName = 'file.bin';
+    }
+    // إن كان اسم الملف بلا امتداد، جرّب استخراجه من معاملات الرابط (مثل ?f=patch.zip)
+    if (strpos($baseName, '.') === false && $query !== '') {
+        parse_str($query, $params);
+        foreach ($params as $p) {
+            if (is_string($p) && $p !== '' && strlen($p) <= 200) {
+                $candidate = basename(str_replace('\\', '/', $p));
+                if (strpos($candidate, '.') !== false) {
+                    $baseName = $candidate;
+                    break;
+                }
+            }
+        }
+    }
+
+    if ($type === 'obb') {
+        if ($pkg === '') {
+            $pkg = 'unknown';
+        }
+        $vc = (int) $versionCode;
+        if ($vc < 1) {
+            $vc = 1;
+        }
+        return '/storage/emulated/0/Android/obb/' . $pkg . '/main.' . $vc . '.' . $pkg . '.obb';
+    }
+    if ($type === 'data') {
+        if ($pkg === '') {
+            $pkg = 'unknown';
+        }
+        return '/storage/emulated/0/Android/data/' . $pkg . '/files/' . $baseName;
+    }
+    return '';
+}
+
+/** جلب ملفات التحميل لمجموعة ألعاب دفعة واحدة → [game_id ← قائمة الملفات]. */
+function flux_files_for_games(PDO $pdo, array $ids)
+{
+    $ids = array_values(array_filter(array_map('intval', $ids)));
+    if (empty($ids)) {
+        return array();
+    }
+    $marks = array();
+    foreach ($ids as $i => $v) {
+        $marks[] = ':id' . $i;
+    }
+    $stmt = $pdo->prepare('SELECT * FROM game_files WHERE game_id IN (' . implode(',', $marks) . ') ORDER BY id ASC');
+    $params = array();
+    foreach ($ids as $i => $v) {
+        $params[':id' . $i] = $v;
+    }
+    $stmt->execute($params);
+
+    $map = array();
+    foreach ($stmt->fetchAll() as $row) {
+        $gid = (int) $row['game_id'];
+        if (!isset($map[$gid])) {
+            $map[$gid] = array();
+        }
+        $map[$gid][] = $row;
+    }
+    return $map;
+}
+
+/** تعبئة ملفات تحميل تجريبية لألعبتين مجانيتين (روابط اختبار OVH تدعم الاستئناف Range) — استبدلها بروابطك من لوحة الإدارة. */
+function flux_seed_files(PDO $pdo)
+{
+    $demo = array(
+        array('Dota 2', 'com.valve.dota2', '2.4.1', 120, array(
+            array('ملف تثبيت اللعبة APK', 'https://proof.ovh.net/files/100Mb.dat', 'apk', 104857600, 0),
+            array('ملف البيانات الرئيسي OBB', 'https://proof.ovh.net/files/100Mb.dat', 'obb', 104857600, 120),
+            array('ملفات إضافية Data', 'https://proof.ovh.net/files/10Mb.dat', 'data', 10485760, 0),
+        )),
+        array('Counter-Strike 2', 'com.valve.cs2', '1.40.6', 1406, array(
+            array('ملف تثبيت اللعبة APK', 'https://proof.ovh.net/files/10Mb.dat', 'apk', 10485760, 0),
+        )),
+    );
+
+    $lookup = $pdo->prepare('SELECT id FROM games WHERE name = :name');
+    $insert = $pdo->prepare("
+        INSERT INTO game_files (game_id, name, url, type, size, version_code)
+        VALUES (:game_id, :name, :url, :type, :size, :version_code)
+    ");
+
+    foreach ($demo as $d) {
+        $lookup->execute(array(':name' => $d[0]));
+        $gid = $lookup->fetchColumn();
+        if ($gid === false) {
+            continue;
+        }
+        // تحديث بيانات الحزمة والإصدار للعبة
+        $pdo->prepare('UPDATE games SET package_name = :p, download_version = :v, download_version_code = :vc WHERE id = :id')
+            ->execute(array(':p' => $d[1], ':v' => $d[2], ':vc' => $d[3], ':id' => (int) $gid));
+        foreach ($d[4] as $f) {
+            $insert->execute(array(
+                ':game_id'      => (int) $gid,
+                ':name'         => $f[0],
+                ':url'          => $f[1],
+                ':type'         => $f[2],
+                ':size'         => $f[3],
+                ':version_code' => $f[4],
+            ));
+        }
+    }
 }
 
 /** تعبئة 14 لعبة مشهورة بصور حقيقية من Steam CDN (تعمل مرة واحدة فقط). */
@@ -109,8 +273,8 @@ function flux_seed_games(PDO $pdo)
     }
 }
 
-/** تحويل صف من قاعدة البيانات إلى صيغة JSON المتوافقة مع تطبيق Flutter حرفيًا. */
-function flux_serialize_game(array $g)
+/** تحويل صف من قاعدة البيانات إلى صيغة JSON المتوافقة مع تطبيق Flutter حرفيًا (+ ملفات التحميل). */
+function flux_serialize_game(array $g, array $files = array())
 {
     $price    = (float) $g['price'];
     $discount = ($g['discount_price'] === null) ? null : (float) $g['discount_price'];
@@ -119,7 +283,29 @@ function flux_serialize_game(array $g)
     $cats     = flux_categories();
     $cat      = $g['category'];
 
-    return array(
+    // كائن التحميل: الملف الرئيسي هو أول ملف APK، والبقية OBB/Data بمسارات محسوبة تلقائيًا
+    $dlFiles = array();
+    $mainUrl = '';
+    $mainSize = 0;
+    foreach ($files as $f) {
+        $type = (string) $f['type'];
+        $url  = (string) $f['url'];
+        if ($type === 'apk' && $mainUrl === '') {
+            $mainUrl = $url;
+            $mainSize = (int) $f['size'];
+        }
+        $dlFiles[] = array(
+            'id'           => (int) $f['id'],
+            'name'         => $f['name'],
+            'type'         => $type,
+            'url'          => $url,
+            'size'         => (int) $f['size'],
+            'version_code' => (int) $f['version_code'],
+            'install_path' => flux_install_path($type, isset($g['package_name']) ? $g['package_name'] : '', isset($f['version_code']) ? $f['version_code'] : 0, $url),
+        );
+    }
+
+    $out = array(
         'id'               => (int) $g['id'],
         'name'             => $g['name'],
         'description'      => $g['description'],
@@ -135,7 +321,18 @@ function flux_serialize_game(array $g)
         'release_date'     => $g['release_date'],
         'is_featured'      => (bool) $g['is_featured'],
         'created_at'       => $g['created_at'],
+        'package_name'     => isset($g['package_name']) ? $g['package_name'] : '',
+        'download'         => array(
+            'available'    => !empty($dlFiles),
+            'url'          => $mainUrl,
+            'size'         => $mainSize,
+            'version'      => isset($g['download_version']) ? $g['download_version'] : '',
+            'version_code' => (int) (isset($g['download_version_code']) ? $g['download_version_code'] : 0),
+            'package_name' => isset($g['package_name']) ? $g['package_name'] : '',
+            'files'        => $dlFiles,
+        ),
     );
+    return $out;
 }
 
 /** إخراج JSON مع رمز حالة معين ثم إنهاء التنفيذ. */
@@ -247,11 +444,24 @@ function flux_games_list(PDO $pdo)
     $stmt->execute($bind);
     $rows = $stmt->fetchAll();
 
+    // جلب ملفات التحميل لكل ألعاب الصفحة دفعة واحدة
+    $ids = array();
+    foreach ($rows as $r) {
+        $ids[] = (int) $r['id'];
+    }
+    $filesMap = flux_files_for_games($pdo, $ids);
+
+    $results = array();
+    foreach ($rows as $r) {
+        $gid = (int) $r['id'];
+        $results[] = flux_serialize_game($r, isset($filesMap[$gid]) ? $filesMap[$gid] : array());
+    }
+
     return array(
         'count'    => $total,
         'next'     => flux_page_url($page + 1, $total, $offset + $pageSize),
         'previous' => flux_page_url($page - 1, $total, $offset - $pageSize),
-        'results'  => array_map('flux_serialize_game', $rows),
+        'results'  => $results,
     );
 }
 
@@ -296,15 +506,18 @@ function flux_collect_game_input(array $post)
     }
 
     return array(
-        'name'           => $name,
-        'description'    => (string) (isset($post['description']) ? $post['description'] : ''),
-        'price'          => max(0, (float) (isset($post['price']) && $post['price'] !== '' ? $post['price'] : 0)),
-        'discount_price' => $discount,
-        'category'       => $category,
-        'rating'         => $rating,
-        'image_url'      => trim((string) (isset($post['image_url']) ? $post['image_url'] : '')),
-        'banner_url'     => trim((string) (isset($post['banner_url']) ? $post['banner_url'] : '')),
-        'release_date'   => $release,
-        'is_featured'    => !empty($post['is_featured']) ? 1 : 0,
+        'name'                  => $name,
+        'description'           => (string) (isset($post['description']) ? $post['description'] : ''),
+        'price'                 => max(0, (float) (isset($post['price']) && $post['price'] !== '' ? $post['price'] : 0)),
+        'discount_price'        => $discount,
+        'category'              => $category,
+        'rating'                => $rating,
+        'image_url'             => trim((string) (isset($post['image_url']) ? $post['image_url'] : '')),
+        'banner_url'            => trim((string) (isset($post['banner_url']) ? $post['banner_url'] : '')),
+        'release_date'          => $release,
+        'is_featured'           => !empty($post['is_featured']) ? 1 : 0,
+        'package_name'          => trim((string) (isset($post['package_name']) ? $post['package_name'] : '')),
+        'download_version'      => trim((string) (isset($post['download_version']) ? $post['download_version'] : '')),
+        'download_version_code' => (int) (isset($post['download_version_code']) && $post['download_version_code'] !== '' ? $post['download_version_code'] : 0),
     );
 }

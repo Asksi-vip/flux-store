@@ -36,23 +36,31 @@ jobs:
         working-directory: app
         run: flutter create . --platforms android --org com.fluxstore
 
-      # ضروري: صلاحية الإنترنت للنسخة النهائية + السماح بـ HTTP للتطوير + اسم التطبيق
+      # ضروري: صلاحية الإنترنت + التخزين (التحميلات) + السماح بـ HTTP + اسم التطبيق
       - name: ضبط الـ AndroidManifest
         working-directory: app
         run: |
           python3 - <<'PY'
           p = "android/app/src/main/AndroidManifest.xml"
           s = open(p, encoding="utf-8").read()
-          if "android.permission.INTERNET" not in s:
-              s = s.replace(
-                  "<application",
-                  '<uses-permission android:name="android.permission.INTERNET"/>\n    <application',
-                  1,
-              )
+          perms = {
+              "android.permission.INTERNET": '<uses-permission android:name="android.permission.INTERNET"/>\n    ',
+              "android.permission.WRITE_EXTERNAL_STORAGE": '<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>\n    ',
+              "android.permission.MANAGE_EXTERNAL_STORAGE": '<uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>\n    ',
+          }
+          for perm, tag in perms.items():
+              if perm not in s:
+                  s = s.replace("<application", tag + "<application", 1)
           if "usesCleartextTraffic" not in s:
               s = s.replace(
                   "<application",
                   '<application\n        android:usesCleartextTraffic="true"',
+                  1,
+              )
+          if "requestLegacyExternalStorage" not in s:
+              s = s.replace(
+                  "<application",
+                  '<application\n        android:requestLegacyExternalStorage="true"',
                   1,
               )
           s = s.replace('android:label="flux_store"', 'android:label="Flux"')
