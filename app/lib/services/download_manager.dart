@@ -239,6 +239,32 @@ class DownloadManager extends ChangeNotifier {
     }
   }
 
+  // ---------- التثبيت التلقائي بعد اكتمال التحميل ----------
+
+  /// فتح مثبّت أندرويد ("هل تريد تثبيت هذا التطبيق؟") لملف APK المنزّل —
+  /// نفس نافذة التثبيت التي يفتحها Epic Games بعد اكتمال التحميل.
+  /// يعيد true إذا فُتحت النافذة فعليًا.
+  Future<bool> openInstaller(int gameId) async {
+    if (!Platform.isAndroid) return false;
+    final DownloadTask? t = _tasks[gameId];
+    if (t == null || t.state != DownloadTaskState.completed) return false;
+    for (final FileTask f in t.files) {
+      if (f.file.type != 'apk' || f.localPath == null) continue;
+      final File apk = File(f.localPath!);
+      if (!apk.existsSync() || apk.lengthSync() <= 0) continue;
+      try {
+        final bool ok = await _bgChannel.invokeMethod<bool>(
+          'installApk',
+          <String, dynamic>{'path': f.localPath},
+        );
+        return ok ?? false;
+      } catch (_) {
+        return false;
+      }
+    }
+    return false;
+  }
+
   // ---------- الاستعادة من التخزين المحلي ----------
 
   /// استعادة المهام بعد إعادة فتح التطبيق + إكمال ما كان بانتظار الشبكة.
@@ -319,6 +345,8 @@ class DownloadManager extends ChangeNotifier {
     _bgStopIfNeeded();
     await _persist();
     notifyListeners();
+    // مثل Epic Games: فتح نافذة تثبيت أندرويد تلقائيًا بعد اكتمال التحميل
+    await openInstaller(t.game.id);
   }
 
   /// تنزيل ملف واحد كاملًا مع دعم الاستئناف (Range) وإعادة المحاولة التلقائية.

@@ -169,6 +169,26 @@ class DownloadButton extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 12),
+                EpicButton(
+                  label: 'تثبيت اللعبة',
+                  icon: Icons.install_mobile_rounded,
+                  onPressed: () async {
+                    final bool ok =
+                        await DownloadManager.instance.openInstaller(game.id);
+                    if (!ok && context.mounted) {
+                      ScaffoldMessenger.of(context)
+                        ..hideCurrentSnackBar()
+                        ..showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'ملف APK غير موجود على المسار — انقله يدويًا ثم أعد المحاولة',
+                            ),
+                          ),
+                        );
+                    }
+                  },
+                ),
+                const SizedBox(height: 10),
                 ..._filesRows(context, task),
                 const SizedBox(height: 8),
                 TextButton(

@@ -50,13 +50,31 @@ class GamePricePill extends StatelessWidget {
   /// وضع مضغوط داخل البطاقات الصغيرة
   final bool compact;
 
-  void _handleTap(BuildContext context) {
+  Future<void> _handleTap(BuildContext context) async {
+    // لعبة مكتملة التحميل → نافذة تثبيت أندرويد مباشرة مثل Epic
+    final DownloadTask? task = DownloadManager.instance.taskFor(game.id);
+    if (task != null && task.state == DownloadTaskState.completed) {
+      final bool ok = await DownloadManager.instance.openInstaller(game.id);
+      if (!ok && context.mounted) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            const SnackBar(
+              content: Text(
+                'ملف APK غير موجود على المسار — افتح تبويب التنزيلات وانقله يدويًا',
+              ),
+            ),
+          );
+      }
+      return;
+    }
     if (game.isDownloadable) {
       DownloadManager.instance.start(game);
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
-          SnackBar(content: Text('بدأ تحميل ${game.name} — يكمل حتى لو انقطع النت')),
+          SnackBar(
+              content: Text('بدأ تحميل ${game.name} — يكمل حتى لو انقطع النت')),
         );
       return;
     }
