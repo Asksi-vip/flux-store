@@ -50,9 +50,9 @@ class _SearchScreenState extends State<SearchScreen> {
   static const List<(String, String)> _priceOptions = [
     ('all', 'كل الأسعار'),
     ('free', 'مجاني'),
-    ('low', 'أقل من 20$'),
-    ('mid', '20$ - 50$'),
-    ('high', 'أكثر من 50$'),
+    ('low', 'أقل من 20\$'),
+    ('mid', '20\$ - 50\$'),
+    ('high', 'أكثر من 50\$'),
   ];
 
   @override

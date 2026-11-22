@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../config.dart';
 import '../controllers/library_controller.dart';
+import '../models/game.dart';
 import '../services/api_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/fade_in_slide.dart';

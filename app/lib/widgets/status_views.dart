@@ -35,7 +35,7 @@ class LoadingGrid extends StatelessWidget {
         itemBuilder: (context, int i) => Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: const [
-            Expanded(child: SkeletonBox(radius: 4)),
+            Expanded(child: SkeletonBox(height: double.infinity, radius: 4)),
             SizedBox(height: 10),
             SkeletonBox(height: 12, radius: 3),
             SizedBox(height: 6),
