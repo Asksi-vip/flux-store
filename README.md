@@ -7,6 +7,18 @@
 | 📱 تطبيق Android | Flutter + dio + SharedPreferences | `/app` |
 | ⚙️ Backend API | Python + Django + Django REST Framework | `/api` |
 
+[![Build Flux APK](https://github.com/Asksi-vip/flux-store/actions/workflows/build-apk.yml/badge.svg)](https://github.com/Asksi-vip/flux-store/actions/workflows/build-apk.yml)
+
+## 📲 تحميل APK جاهز (بدون تثبيت Flutter)
+
+يوجد سير عمل GitHub Actions (`.github/workflows/build-apk.yml`) يبني نسخة الإطلاق تلقائيًا عند كل تحديث، وينشر الملف في صفحة Releases:
+
+- **أحدث APK:** https://github.com/Asksi-vip/flux-store/releases/latest/download/flux-store.apk
+- **صفحة Releases:** https://github.com/Asksi-vip/flux-store/releases
+- يمكن أيضًا تحميله من تبويب **Actions ← Build Flux APK ← Artifacts**
+
+التثبيت على أندرويد 7+: نزّل `flux-store.apk` وثبّته مباشرة (اسمح بخيار "مصادر غير معروفة" إن طُلب). لا تحتاج Flutter SDK على جهازك إطلاقًا — السحابة تبنيه لك، ويمكنك تشغيل البناء يدويًا من زر **Run workflow** في تبويب Actions.
+
 ## 🎨 هوية التصميم
 
 | اللون | القيمة | الاستخدام |

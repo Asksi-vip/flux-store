@@ -1,0 +1,94 @@
+# بناء APK تلقائيًا عبر GitHub Actions — لا يحتاج Flutter SDK على جهازك.
+# يعمل عند كل push إلى main، ويمكن تشغيله يدويًا من تبويب Actions.
+# الناتج: ملف flux-store.apk في الـ Artifacts وفي صفحة Releases.
+name: Build Flux APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: جلب الكود
+        uses: actions/checkout@v4
+
+      - name: تثبيت Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: تثبيت Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: "3.24.5"
+          cache: true
+
+      # مجلد android غير مخزّن في الـ repo (يبقى خفيفًا) — يُولَّد هنا في كل بناء
+      - name: توليد مجلد الأندرويد
+        working-directory: app
+        run: flutter create . --platforms android --org com.fluxstore
+
+      # ضروري: صلاحية الإنترنت للنسخة النهائية + السماح بـ HTTP للتطوير + اسم التطبيق
+      - name: ضبط الـ AndroidManifest
+        working-directory: app
+        run: |
+          python3 - <<'PY'
+          p = "android/app/src/main/AndroidManifest.xml"
+          s = open(p, encoding="utf-8").read()
+          if "android.permission.INTERNET" not in s:
+              s = s.replace(
+                  "<application",
+                  '<uses-permission android:name="android.permission.INTERNET"/>\n    <application',
+                  1,
+              )
+          if "usesCleartextTraffic" not in s:
+              s = s.replace(
+                  "<application",
+                  '<application\n        android:usesCleartextTraffic="true"',
+                  1,
+              )
+          s = s.replace('android:label="flux_store"', 'android:label="Flux"')
+          open(p, "w", encoding="utf-8").write(s)
+          print(s)
+          PY
+
+      - name: تثبيت الاعتماديات
+        working-directory: app
+        run: flutter pub get
+
+      - name: بناء نسخة الإطلاق
+        working-directory: app
+        run: flutter build apk --release
+
+      - name: تجهيز الملف النهائي
+        run: |
+          mkdir -p dist
+          cp app/build/app/outputs/flutter-apk/app-release.apk dist/flux-store.apk
+          ls -lh dist/
+
+      - name: رفع الـ APK كـ Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flux-store-apk
+          path: dist/flux-store.apk
+
+      - name: نشر الـ APK في Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: "Flux APK — بناء #${{ github.run_number }}"
+          files: dist/flux-store.apk
+          body: |
+            بناء تلقائي (release) لتطبيق **Flux — متجر الألعاب**.
+
+            **التثبيت:** نزّل `flux-store.apk` وثبّته مباشرة على أي أندرويد 7+ (اسمح بخيار "مصادر غير معروفة" من الإعدادات إن طُلب).
+
+            **الاتصال بالـ API:** التطبيق مضبوط على `http://10.0.2.2:8000` للمحاكي — على جهاز حقيقي غيّر العنوان في `app/lib/config.dart` إلى IP جهاز الكمبيوتر، أو استخدم `adb reverse tcp:8000 tcp:8000`.
