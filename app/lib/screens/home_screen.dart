@@ -254,7 +254,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             fit: StackFit.expand,
                             children: [
                               buildGameCover(g),
-                              Positioned(
+                              PositionedDirectional(
                                 top: 8,
                                 start: 8,
                                 child: DiscountBadge(

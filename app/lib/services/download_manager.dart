@@ -253,7 +253,7 @@ class DownloadManager extends ChangeNotifier {
       final File apk = File(f.localPath!);
       if (!apk.existsSync() || apk.lengthSync() <= 0) continue;
       try {
-        final bool ok = await _bgChannel.invokeMethod<bool>(
+        final bool? ok = await _bgChannel.invokeMethod<bool>(
           'installApk',
           <String, dynamic>{'path': f.localPath},
         );

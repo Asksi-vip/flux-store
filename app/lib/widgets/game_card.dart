@@ -121,7 +121,7 @@ class _GameCardState extends State<GameCard> {
                   children: [
                     buildGameCover(game),
                     if (game.hasDiscount)
-                      Positioned(
+                      PositionedDirectional(
                         top: 8,
                         start: 8,
                         child: DiscountBadge(percent: game.discountPercent),
