@@ -4,405 +4,385 @@ import '../controllers/library_controller.dart';
 import '../models/game.dart';
 import '../services/api_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/epic_button.dart';
+import '../widgets/game_card.dart';
+import '../widgets/page_fade_transition.dart';
+import '../widgets/price_tag.dart';
 import '../widgets/rating_stars.dart';
+import 'search_screen.dart';
 
-/// شاشة تفاصيل اللعبة: غلاف كبير، وصف، تقييم بالنجوم، سعر، وأزرار الشراء والإضافة للمكتبة.
+/// صفحة تفاصيل اللعبة بأسلوب Epic: بانر سينمائي، سعر وخصم، زر إضافة متحرك، ومقترحات.
 class GameDetailsScreen extends StatefulWidget {
-  final Game game;
-  final ApiService api;
-  final LibraryController library;
-
   const GameDetailsScreen({
     super.key,
     required this.game,
-    required this.api,
-    required this.library,
+    required this.controller,
   });
+
+  final Game game;
+  final LibraryController controller;
 
   @override
   State<GameDetailsScreen> createState() => _GameDetailsScreenState();
 }
 
 class _GameDetailsScreenState extends State<GameDetailsScreen> {
-  late Game _game = widget.game;
+  bool _expanded = false;
+  late final Future<List<Game>> _similarFuture =
+      ApiService.instance.getGames(category: widget.game.category);
 
-  @override
-  void initState() {
-    super.initState();
-    _refresh();
-  }
-
-  /// تحديث بيانات اللعبة من الخادم بصمت (إن فشل نبقى على البيانات الحالية).
-  Future<void> _refresh() async {
-    try {
-      final fresh = await widget.api.getGame(widget.game.id);
-      if (!mounted) return;
-      setState(() => _game = fresh);
-    } catch (_) {
-      // نتجاهل الخطأ ونعرض البيانات القادمة من القائمة
-    }
-  }
-
-  /// حوار تأكيد الشراء ثم إضافة اللعبة للمكتبة.
-  void _buy() {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('تأكيد الشراء'),
-        content: Text(
-          _game.isFree
-              ? 'هل تريد الحصول على "${_game.name}" مجانًا؟'
-              : 'سيتم شراء "${_game.name}" بمبلغ ${_game.finalPriceLabel}.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('إلغاء', style: TextStyle(color: FluxColors.textMuted)),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(ctx);
-              widget.library.add(_game);
-              _showToast(_game.isFree ? 'أصبحت اللعبة في مكتبتك الآن 🎮' : 'تم الشراء وأُضيفت اللعبة إلى مكتبتك 🎮');
-            },
-            child: const Text(
-              'تأكيد',
-              style: TextStyle(color: FluxColors.pink, fontWeight: FontWeight.bold),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// رسالة تأكيد سفلية.
-  void _showToast(String message) {
+  /// إضافة/إزالة اللعبة من المكتبة مع تأكيد متحرك وزر تراجع.
+  Future<void> _toggleLibrary() async {
+    final Game game = widget.game;
+    final bool wasIn = widget.controller.contains(game.id);
+    await widget.controller.toggle(game);
+    if (!mounted) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message)));
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            wasIn ? 'تمت الإزالة من المكتبة' : 'تمت الإضافة إلى مكتبتك',
+          ),
+          action: SnackBarAction(
+            label: wasIn ? 'تراجع' : 'إزالة',
+            onPressed: () {
+              if (wasIn) {
+                widget.controller.add(game);
+              } else {
+                widget.controller.remove(game.id);
+              }
+            },
+          ),
+        ),
+      );
   }
 
   @override
   Widget build(BuildContext context) {
-    return ListenableBuilder(
-      listenable: widget.library,
-      builder: (context, _) {
-        final inLibrary = widget.library.contains(_game.id);
-        return Scaffold(
-          body: CustomScrollView(
-            slivers: [
-              // غلاف اللعبة مع شريط علوي متدرج
-              SliverAppBar(
-                pinned: true,
-                expandedHeight: 300,
-                iconTheme: const IconThemeData(color: FluxColors.textPrimary),
-                flexibleSpace: FlexibleSpaceBar(
-                  background: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      _coverImage(),
-                      DecoratedBox(
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.bottomCenter,
-                            end: Alignment.topCenter,
-                            colors: [
-                              FluxColors.background,
-                              FluxColors.background.withOpacity(.3),
-                              Colors.transparent,
-                            ],
-                            stops: const [0, .4, 1],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              // محتوى التفاصيل
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 110),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // التصنيف + شارة المميزة
-                      Row(
-                        children: [
-                          _chip(
-                            _game.categoryDisplay,
-                            FluxColors.pink.withOpacity(.18),
-                            FluxColors.pink,
-                          ),
-                          const SizedBox(width: 8),
-                          if (_game.isFeatured)
-                            _chip(
-                              'لعبة مميزة',
-                              FluxColors.cyan.withOpacity(.15),
-                              FluxColors.cyan,
+    final Game game = widget.game;
+    final String bannerUrl = game.banner.isNotEmpty ? game.banner : game.image;
+    final String releaseYear = game.releaseDate.split('-').first;
+
+    return Scaffold(
+      backgroundColor: EpicColors.background,
+      body: ListenableBuilder(
+        listenable: widget.controller,
+        builder: (context, _) {
+          final bool inLibrary = widget.controller.contains(game.id);
+          return ListView(
+            padding: EdgeInsets.zero,
+            children: [
+              // البانر السينمائي مع زر الرجوع وشارة الخصم
+              Stack(
+                children: [
+                  SizedBox(
+                    height: 280,
+                    width: double.infinity,
+                    child: bannerUrl.isEmpty
+                        ? Container(
+                            color: EpicColors.surface,
+                            alignment: Alignment.center,
+                            child: const Icon(
+                              Icons.sports_esports,
+                              color: EpicColors.border,
+                              size: 48,
                             ),
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      // الاسم
-                      Text(
-                        _game.name,
-                        style: const TextStyle(
-                          color: FluxColors.textPrimary,
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                          height: 1.3,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      // التقييم + تاريخ الإصدار
-                      Row(
-                        children: [
-                          RatingStars(rating: _game.rating, size: 20),
-                          const SizedBox(width: 8),
-                          Text(
-                            _game.rating.toStringAsFixed(1),
-                            style: const TextStyle(
-                              color: FluxColors.textPrimary,
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(width: 14),
-                          const Icon(Icons.calendar_month_rounded, size: 15, color: FluxColors.textMuted),
-                          const SizedBox(width: 4),
-                          Text(
-                            _game.releaseDate,
-                            style: const TextStyle(color: FluxColors.textMuted, fontSize: 12),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 20),
-                      // الوصف
-                      const Text(
-                        'عن اللعبة',
-                        style: TextStyle(
-                          color: FluxColors.textPrimary,
-                          fontSize: 17,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        _game.description,
-                        style: const TextStyle(
-                          color: FluxColors.textMuted,
-                          fontSize: 14,
-                          height: 1.9,
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                      // بطاقة السعر
-                      _priceCard(),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-          // أزرار الإضافة للمكتبة والشراء
-          bottomNavigationBar: Container(
-            color: FluxColors.background,
-            child: SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: _outlinedActionButton(inLibrary),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: _buy,
-                        child: Container(
-                          height: 52,
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(16),
-                            gradient: FluxColors.pinkPurple,
-                            boxShadow: neonGlow(FluxColors.pink),
-                          ),
-                          child: Center(
-                            child: Text(
-                              _game.isFree ? 'احصل عليها مجانًا' : 'شراء الآن',
-                              style: const TextStyle(
-                                color: FluxColors.textPrimary,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 14,
+                          )
+                        : Image.network(
+                            bannerUrl,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) =>
+                                Container(
+                              color: EpicColors.surface,
+                              alignment: Alignment.center,
+                              child: const Icon(
+                                Icons.sports_esports,
+                                color: EpicColors.border,
+                                size: 48,
                               ),
                             ),
                           ),
-                        ),
+                  ),
+                  Container(
+                    height: 280,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        stops: const [0.3, 1],
+                        colors: [
+                          Colors.transparent,
+                          EpicColors.background.withOpacity(.95),
+                        ],
                       ),
                     ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  /// زر الإضافة/الإزالة من المكتبة.
-  Widget _outlinedActionButton(bool inLibrary) {
-    final edge = inLibrary ? FluxColors.cyan : FluxColors.textMuted;
-    return GestureDetector(
-      onTap: () async {
-        await widget.library.toggle(_game);
-        if (!mounted) return;
-        _showToast(inLibrary ? 'تمت إزالة اللعبة من مكتبتك' : 'تمت إضافة اللعبة إلى مكتبتك');
-      },
-      child: Container(
-        height: 52,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          color: FluxColors.surface.withOpacity(.6),
-          border: Border.all(color: edge.withOpacity(.75), width: 1.4),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              inLibrary ? Icons.check_rounded : Icons.bookmark_add_rounded,
-              size: 20,
-              color: edge,
-            ),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Text(
-                inLibrary ? 'في مكتبتك' : 'أضف للمكتبة',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: edge,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// بطاقة السعر مع شارة نسبة التوفير.
-  Widget _priceCard() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(18),
-        color: FluxColors.surface,
-        border: Border.all(color: FluxColors.pink.withOpacity(.35)),
-        boxShadow: [BoxShadow(color: FluxColors.pink.withOpacity(.12), blurRadius: 20)],
-      ),
-      child: Row(
-        children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('السعر', style: TextStyle(color: FluxColors.textMuted, fontSize: 12)),
-              const SizedBox(height: 6),
-              Row(
-                children: [
-                  if (_game.hasDiscount) ...[
-                    Text(
-                      _game.priceLabel,
-                      style: const TextStyle(
-                        color: FluxColors.textMuted,
-                        fontSize: 14,
-                        decoration: TextDecoration.lineThrough,
+                  ),
+                  SafeArea(
+                    child: Padding(
+                      padding: const EdgeInsets.all(8),
+                      child: Row(
+                        children: [
+                          _circleButton(
+                            Icons.arrow_forward_rounded,
+                            () => Navigator.of(context).maybePop(),
+                          ),
+                          const Spacer(),
+                          if (game.hasDiscount)
+                            DiscountBadge(
+                              percent: game.discountPercent,
+                              fontSize: 14,
+                            ),
+                        ],
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                  ],
-                  Text(
-                    _game.finalPriceLabel,
-                    style: TextStyle(
-                      color: _game.isFree ? FluxColors.cyan : FluxColors.pink,
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
                     ),
                   ),
                 ],
               ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      game.categoryDisplay,
+                      style: const TextStyle(
+                        color: EpicColors.cyan,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      game.name,
+                      style: const TextStyle(
+                        color: EpicColors.textPrimary,
+                        fontSize: 24,
+                        fontWeight: FontWeight.w800,
+                        height: 1.25,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        RatingStars(rating: game.rating, showValue: true),
+                        const SizedBox(width: 12),
+                        if (releaseYear.isNotEmpty)
+                          Text(
+                            'الإصدار: $releaseYear',
+                            style: const TextStyle(
+                              color: EpicColors.textSecondary,
+                              fontSize: 12,
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+                    // زر الإضافة / الإزالة مع انتقال متحرك بين الحالتين
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 300),
+                      transitionBuilder: (Widget child, Animation<double> anim) {
+                        return FadeTransition(
+                          opacity: anim,
+                          child: ScaleTransition(
+                            scale: Tween<double>(begin: .96, end: 1).animate(anim),
+                            child: child,
+                          ),
+                        );
+                      },
+                      child: inLibrary
+                          ? KeyedSubtree(
+                              key: const ValueKey<String>('in'),
+                              child: EpicButton(
+                                label: 'في المكتبة',
+                                variant: EpicButtonVariant.success,
+                                icon: Icons.check_circle_outline_rounded,
+                                onPressed: _toggleLibrary,
+                              ),
+                            )
+                          : KeyedSubtree(
+                              key: const ValueKey<String>('out'),
+                              child: EpicButton(
+                                label: game.isFree
+                                    ? 'احصل عليها مجانًا'
+                                    : 'أضف إلى المكتبة',
+                                icon: Icons.add_circle_outline_rounded,
+                                onPressed: _toggleLibrary,
+                              ),
+                            ),
+                    ),
+                    const SizedBox(height: 16),
+                    // صف السعر مع قيمة التوفير
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: EpicColors.surface,
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: EpicColors.border),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(child: PriceTag(game: game, fontSize: 16)),
+                          if (game.hasDiscount)
+                            Text(
+                              'وفّر \$${(game.price - game.finalPrice).toStringAsFixed(2)}',
+                              style: const TextStyle(
+                                color: EpicColors.cyan,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    // الوصف مع إمكانية التوسيع (انتقال متحرك)
+                    const Text(
+                      'عن اللعبة',
+                      style: TextStyle(
+                        color: EpicColors.textPrimary,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    AnimatedCrossFade(
+                      duration: const Duration(milliseconds: 250),
+                      crossFadeState: _expanded
+                          ? CrossFadeState.showSecond
+                          : CrossFadeState.showFirst,
+                      firstChild: Text(
+                        game.description,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: EpicColors.textSecondary,
+                          fontSize: 13.5,
+                          height: 1.7,
+                        ),
+                      ),
+                      secondChild: Text(
+                        game.description,
+                        style: const TextStyle(
+                          color: EpicColors.textSecondary,
+                          fontSize: 13.5,
+                          height: 1.7,
+                        ),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () => setState(() => _expanded = !_expanded),
+                      style: TextButton.styleFrom(
+                        padding: EdgeInsets.zero,
+                      ),
+                      child: Text(
+                        _expanded ? 'عرض أقل' : 'اقرأ المزيد',
+                        style: const TextStyle(
+                          color: EpicColors.cyan,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    // مقترحات من نفس الفئة
+                    Text(
+                      'قد يعجبك أيضًا',
+                      style: const TextStyle(
+                        color: EpicColors.textPrimary,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'من فئة ${game.categoryDisplay}',
+                      style: const TextStyle(
+                        color: EpicColors.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    FutureBuilder<List<Game>>(
+                      future: _similarFuture,
+                      builder: (context, AsyncSnapshot<List<Game>> snapshot) {
+                        if (snapshot.connectionState == ConnectionState.waiting) {
+                          return const SizedBox(
+                            height: 150,
+                            child: Center(
+                              child: CircularProgressIndicator(
+                                color: EpicColors.blue,
+                                strokeWidth: 2,
+                              ),
+                            ),
+                          );
+                        }
+                        final List<Game> similar = (snapshot.data ?? const <Game>[])
+                            .where((Game g) => g.id != game.id)
+                            .take(10)
+                            .toList();
+                        if (similar.isEmpty) {
+                          return const Text(
+                            'لا توجد ألعاب مشابهة بعد',
+                            style: TextStyle(
+                              color: EpicColors.textSecondary,
+                              fontSize: 13,
+                            ),
+                          );
+                        }
+                        return SizedBox(
+                          height: 235,
+                          child: ListView.separated(
+                            scrollDirection: Axis.horizontal,
+                            padding: EdgeInsets.zero,
+                            itemCount: similar.length,
+                            separatorBuilder: (_, __) =>
+                                const SizedBox(width: 12),
+                            itemBuilder: (context, int i) {
+                              return SizedBox(
+                                width: 120,
+                                child: GameCard(
+                                  game: similar[i],
+                                  onTap: () {
+                                    Navigator.of(context).push(
+                                      epicRoute(
+                                        GameDetailsScreen(
+                                          game: similar[i],
+                                          controller: widget.controller,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              );
+                            },
+                          ),
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
             ],
-          ),
-          const Spacer(),
-          if (_game.hasDiscount)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: FluxColors.orange.withOpacity(.15),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: FluxColors.orange.withOpacity(.5)),
-              ),
-              child: Text(
-                'وفّر ${_game.discountPercent}%',
-                style: const TextStyle(
-                  color: FluxColors.orange,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 13,
-                ),
-              ),
-            ),
-        ],
+          );
+        },
       ),
     );
   }
 
-  /// صورة الغلاف الكبيرة.
-  Widget _coverImage() {
-    if (_game.banner.isEmpty && _game.image.isEmpty) {
-      return Container(
-        color: FluxColors.card,
-        child: const Center(
-          child: Icon(Icons.videogame_asset_rounded, size: 70, color: FluxColors.purple),
+  /// زر دائري شفاف فوق البانر (رجوع).
+  Widget _circleButton(IconData icon, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 38,
+        height: 38,
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(.55),
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white24),
         ),
-      );
-    }
-    final url = _game.banner.isNotEmpty ? _game.banner : _game.image;
-    return Image.network(
-      url,
-      fit: BoxFit.cover,
-      errorBuilder: (_, __, ___) => Container(
-        color: FluxColors.card,
-        child: const Center(
-          child: Icon(Icons.videogame_asset_rounded, size: 70, color: FluxColors.purple),
-        ),
-      ),
-      loadingBuilder: (context, child, progress) =>
-          progress == null
-              ? child
-              : Container(
-                  color: FluxColors.card,
-                  child: const Center(
-                    child: CircularProgressIndicator(color: FluxColors.pink),
-                  ),
-                ),
-    );
-  }
-
-  /// شارة صغيرة ملونة.
-  Widget _chip(String text, Color bg, Color fg) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: fg.withOpacity(.4)),
-      ),
-      child: Text(
-        text,
-        style: TextStyle(color: fg, fontSize: 12, fontWeight: FontWeight.bold),
+        child: Icon(icon, size: 20, color: EpicColors.textPrimary),
       ),
     );
   }

@@ -72,6 +72,7 @@ class ApiService {
           if (minPrice != null) 'min_price': minPrice,
           if (maxPrice != null) 'max_price': maxPrice,
           if (featured != null && featured) 'featured': 'true',
+          'page_size': 50,
           'page': page,
         },
       );

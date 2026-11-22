@@ -1,86 +1,45 @@
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
+import 'epic_button.dart';
+import 'skeleton.dart';
 
-/// شاشة الحالة: جارٍ التحميل.
-class LoadingView extends StatelessWidget {
-  final String? message;
+/// شبكة هياكل تحميل (Skeleton) لمحاكاة شكل شبكة البطاقات أثناء الجلب.
+class LoadingGrid extends StatelessWidget {
+  const LoadingGrid({
+    super.key,
+    this.columns = 2,
+    this.itemCount = 4,
+    this.padding = EdgeInsets.zero,
+  });
 
-  const LoadingView({super.key, this.message});
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const CircularProgressIndicator(color: FluxColors.pink, strokeWidth: 3),
-          const SizedBox(height: 14),
-          Text(
-            message ?? 'جارٍ التحميل...',
-            style: const TextStyle(color: FluxColors.textMuted, fontSize: 13),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// شاشة الحالة: خطأ شبكة/خادم مع زر إعادة المحاولة.
-class ErrorView extends StatelessWidget {
-  final String message;
-  final VoidCallback? onRetry;
-
-  const ErrorView({super.key, required this.message, this.onRetry});
+  final int columns;
+  final int itemCount;
+  final EdgeInsetsGeometry padding;
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 84,
-              height: 84,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: FluxColors.surface,
-                border: Border.all(color: FluxColors.pink.withOpacity(.5)),
-                boxShadow: neonGlow(FluxColors.pink, blur: 22),
-              ),
-              child: const Icon(Icons.wifi_off_rounded, color: FluxColors.pink, size: 36),
-            ),
-            const SizedBox(height: 18),
-            const Text(
-              'تعذر تحميل البيانات',
-              style: TextStyle(
-                color: FluxColors.textPrimary,
-                fontWeight: FontWeight.bold,
-                fontSize: 17,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: FluxColors.textMuted, fontSize: 13, height: 1.7),
-            ),
-            if (onRetry != null) ...[
-              const SizedBox(height: 20),
-              OutlinedButton.icon(
-                onPressed: onRetry,
-                icon: const Icon(Icons.refresh_rounded, size: 20),
-                label: const Text('إعادة المحاولة'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: FluxColors.cyan,
-                  side: BorderSide(color: FluxColors.cyan.withOpacity(.7)),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                  padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
-                ),
-              ),
-            ],
+    return Padding(
+      padding: padding,
+      child: GridView.builder(
+        padding: EdgeInsets.zero,
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        itemCount: itemCount,
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 2,
+          crossAxisSpacing: 12,
+          mainAxisSpacing: 20,
+          childAspectRatio: 0.55,
+        ),
+        itemBuilder: (context, int i) => Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: const [
+            Expanded(child: SkeletonBox(radius: 4)),
+            SizedBox(height: 10),
+            SkeletonBox(height: 12, radius: 3),
+            SizedBox(height: 6),
+            SkeletonBox(height: 10, radius: 3, width: 80),
           ],
         ),
       ),
@@ -88,18 +47,12 @@ class ErrorView extends StatelessWidget {
   }
 }
 
-/// شاشة الحالة: لا يوجد محتوى (نتائج فارغة، مكتبة فارغة...).
-class EmptyView extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String? subtitle;
+/// شاشة الخطأ بأسلوب Epic: أيقونة داخل حلقة + رسالة + زر إعادة المحاولة.
+class ErrorView extends StatelessWidget {
+  const ErrorView({super.key, required this.message, required this.onRetry});
 
-  const EmptyView({
-    super.key,
-    required this.icon,
-    required this.title,
-    this.subtitle,
-  });
+  final String message;
+  final VoidCallback onRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -110,31 +63,120 @@ class EmptyView extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              width: 84,
-              height: 84,
+              width: 72,
+              height: 72,
               decoration: BoxDecoration(
+                color: EpicColors.surface,
                 shape: BoxShape.circle,
-                color: FluxColors.surface,
-                border: Border.all(color: FluxColors.cyan.withOpacity(.5)),
-                boxShadow: neonGlow(FluxColors.cyan, blur: 22),
+                border: Border.all(color: EpicColors.border),
               ),
-              child: Icon(icon, color: FluxColors.cyan, size: 36),
+              child: const Icon(
+                Icons.wifi_off_rounded,
+                color: EpicColors.textSecondary,
+                size: 30,
+              ),
             ),
-            const SizedBox(height: 18),
+            const SizedBox(height: 16),
+            const Text(
+              'تعذر تحميل البيانات',
+              style: TextStyle(
+                color: EpicColors.textPrimary,
+                fontSize: 17,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: EpicColors.textSecondary,
+                fontSize: 13,
+                height: 1.6,
+              ),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: 180,
+              child: EpicButton(
+                label: 'إعادة المحاولة',
+                variant: EpicButtonVariant.secondary,
+                icon: Icons.refresh_rounded,
+                onPressed: onRetry,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// شاشة الحالة الفارغة بأسلوب Epic مع دعوة لاتخاذ إجراء.
+class EmptyView extends StatelessWidget {
+  const EmptyView({
+    super.key,
+    required this.icon,
+    required this.title,
+    this.message,
+    this.actionLabel,
+    this.onAction,
+  });
+
+  final IconData icon;
+  final String title;
+  final String? message;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                color: EpicColors.surface,
+                shape: BoxShape.circle,
+                border: Border.all(color: EpicColors.border),
+              ),
+              child: Icon(icon, color: EpicColors.textSecondary, size: 30),
+            ),
+            const SizedBox(height: 16),
             Text(
               title,
               style: const TextStyle(
-                color: FluxColors.textPrimary,
-                fontWeight: FontWeight.bold,
-                fontSize: 16,
+                color: EpicColors.textPrimary,
+                fontSize: 17,
+                fontWeight: FontWeight.w800,
               ),
             ),
-            if (subtitle != null) ...[
+            if (message != null) ...[
               const SizedBox(height: 8),
               Text(
-                subtitle!,
+                message!,
                 textAlign: TextAlign.center,
-                style: const TextStyle(color: FluxColors.textMuted, fontSize: 13, height: 1.7),
+                style: const TextStyle(
+                  color: EpicColors.textSecondary,
+                  fontSize: 13,
+                  height: 1.6,
+                ),
+              ),
+            ],
+            if (actionLabel != null && onAction != null) ...[
+              const SizedBox(height: 20),
+              SizedBox(
+                width: 200,
+                child: EpicButton(
+                  label: actionLabel!,
+                  icon: Icons.storefront_rounded,
+                  onPressed: onAction,
+                ),
               ),
             ],
           ],

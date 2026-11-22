@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'screens/splash_screen.dart';
 import 'theme/app_theme.dart';
 
-/// نقطة انطلاق تطبيق Flux — متجر الألعاب النيوني.
+/// نقطة انطلاق تطبيق Flux — متجر ألعاب بأسلوب Epic Games.
 void main() {
   runApp(const FluxApp());
 }
@@ -16,7 +16,7 @@ class FluxApp extends StatelessWidget {
     return MaterialApp(
       title: 'Flux — متجر الألعاب',
       debugShowCheckedModeBanner: false,
-      theme: buildFluxTheme(),
+      theme: buildEpicTheme(),
       // واجهة عربية من اليمين إلى اليسار في كامل التطبيق
       builder: (context, child) => Directionality(
         textDirection: TextDirection.rtl,

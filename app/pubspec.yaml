@@ -1,5 +1,5 @@
 name: flux_store
-description: "Flux — متجر ألعاب بتصميم نيون مستوحى من أجواء Vice City، متصل بـ Django REST API."
+description: "Flux — متجر ألعاب بأسلوب Epic Games Store، متصل بـ Django REST API."
 publish_to: "none"
 version: 1.0.0+1
 

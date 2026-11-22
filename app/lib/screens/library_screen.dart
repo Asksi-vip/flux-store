@@ -2,143 +2,169 @@ import 'package:flutter/material.dart';
 
 import '../controllers/library_controller.dart';
 import '../models/game.dart';
-import '../services/api_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/fade_in_slide.dart';
+import '../widgets/game_card.dart';
+import '../widgets/page_fade_transition.dart';
+import '../widgets/price_tag.dart';
 import '../widgets/status_views.dart';
 import 'game_details_screen.dart';
 
-/// شاشة المكتبة: الألعاب المحفوظة محليًا على الجهاز (SharedPreferences).
+/// مكتبة اللاعب بأسلوب Epic: صفوف أنيقة مع سحب للحذف وزر تراجع.
 class LibraryScreen extends StatelessWidget {
-  final ApiService api;
-  final LibraryController library;
+  const LibraryScreen({
+    super.key,
+    required this.controller,
+    required this.onBrowse,
+  });
 
-  const LibraryScreen({super.key, required this.api, required this.library});
+  final LibraryController controller;
+  final VoidCallback onBrowse;
 
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: library,
+      listenable: controller,
       builder: (context, _) {
-        final games = library.games;
-        return Scaffold(
-          appBar: AppBar(title: const Text('مكتبتي')),
-          body: games.isEmpty
-              ? const EmptyView(
-                  icon: Icons.gamepad_rounded,
-                  title: 'مكتبتك فارغة',
-                  subtitle: 'أضف ألعابًا من المتجر لتظهر هنا — تُحفظ على جهازك تلقائيًا',
-                )
-              : Column(
-                  children: [
-                    // ملخص المكتبة
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 6),
-                      child: Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(12),
-                              color: FluxColors.pink.withOpacity(.15),
-                              border: Border.all(color: FluxColors.pink.withOpacity(.4)),
-                            ),
-                            child: Text(
-                              '${games.length} ${games.length == 1 ? 'لعبة' : 'ألعاب'}',
-                              style: const TextStyle(
-                                color: FluxColors.pink,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 13,
-                              ),
-                            ),
-                          ),
-                          const Spacer(),
-                          _totalValue(games),
-                        ],
+        final List<Game> games = controller.games;
+        if (games.isEmpty) {
+          return ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            children: [
+              const SizedBox(height: 110),
+              EmptyView(
+                icon: Icons.video_library_outlined,
+                title: 'مكتبتك فارغة',
+                message: 'أضف ألعابك المفضلة من المتجر لتظهر هنا وتُحفظ على جهازك',
+                actionLabel: 'تصفح المتجر',
+                onAction: onBrowse,
+              ),
+            ],
+          );
+        }
+        final double totalValue =
+            games.fold<double>(0, (double s, Game g) => s + g.finalPrice);
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'مكتبتي',
+                        style: TextStyle(
+                          color: EpicColors.textPrimary,
+                          fontSize: 22,
+                          fontWeight: FontWeight.w800,
+                        ),
                       ),
-                    ),
-                    // قائمة الألعاب
-                    Expanded(
-                      child: ListView.separated(
-                        padding: const EdgeInsets.fromLTRB(16, 6, 16, 20),
-                        itemCount: games.length,
-                        separatorBuilder: (_, __) => const SizedBox(height: 12),
-                        itemBuilder: (context, i) => _gameTile(context, games[i]),
+                      const SizedBox(height: 4),
+                      Text(
+                        '${games.length} لعبة — قيمة المكتبة \$${totalValue.toStringAsFixed(2)}',
+                        style: const TextStyle(
+                          color: EpicColors.textSecondary,
+                          fontSize: 12,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            for (int i = 0; i < games.length; i++)
+              FadeInSlide(
+                delay: Duration(milliseconds: 40 * (i % 8)),
+                child: _GameRow(
+                  game: games[i],
+                  controller: controller,
+                  onOpen: (Game g) {
+                    Navigator.of(context).push(
+                      epicRoute(
+                        GameDetailsScreen(game: g, controller: controller),
+                      ),
+                    );
+                  },
+                ),
+              ),
+          ],
         );
       },
     );
   }
+}
 
-  /// مجموع القيمة النهائية للألعاب غير المجانية.
-  Widget _totalValue(List<Game> games) {
-    final total = games.fold<double>(0, (sum, g) => sum + g.finalPrice);
-    if (total <= 0) {
-      return const Text(
-        'كلها مجانية 🎉',
-        style: TextStyle(color: FluxColors.cyan, fontSize: 12, fontWeight: FontWeight.bold),
+/// صف لعبة في المكتبة: غلاف مصغر + بيانات + حذف بالسحب أو بالزر.
+class _GameRow extends StatelessWidget {
+  const _GameRow({
+    required this.game,
+    required this.controller,
+    required this.onOpen,
+  });
+
+  final Game game;
+  final LibraryController controller;
+  final ValueChanged<Game> onOpen;
+
+  void _remove(BuildContext context) {
+    controller.remove(game.id);
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: const Text('تمت إزالة اللعبة من المكتبة'),
+          action: SnackBarAction(
+            label: 'تراجع',
+            onPressed: () => controller.add(game),
+          ),
+        ),
       );
-    }
-    final text = total == total.roundToDouble()
-        ? total.toStringAsFixed(0)
-        : total.toStringAsFixed(2);
-    return Text(
-      'الإجمالي: \$$text',
-      style: const TextStyle(color: FluxColors.textMuted, fontSize: 13),
-    );
   }
 
-  /// بطاقة لعبة داخل المكتبة مع إمكانية السحب للإزالة.
-  Widget _gameTile(BuildContext context, Game game) {
+  @override
+  Widget build(BuildContext context) {
     return Dismissible(
       key: ValueKey<int>(game.id),
       direction: DismissDirection.endToStart,
-      onDismissed: (_) => library.remove(game.id),
+      onDismissed: (_) => _remove(context),
       background: Container(
         alignment: AlignmentDirectional.centerEnd,
-        padding: const EdgeInsets.only(left: 24),
+        padding: const EdgeInsets.only(left: 20),
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          color: FluxColors.pink.withOpacity(.25),
-          border: Border.all(color: FluxColors.pink.withOpacity(.5)),
+          borderRadius: BorderRadius.circular(4),
+          color: EpicColors.danger.withOpacity(.18),
+          border: Border.all(color: EpicColors.danger.withOpacity(.5)),
         ),
-        child: const Icon(Icons.delete_outline_rounded, color: FluxColors.pink, size: 26),
+        child: const Icon(
+          Icons.delete_outline_rounded,
+          color: EpicColors.danger,
+          size: 26,
+        ),
       ),
       child: GestureDetector(
-        onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => GameDetailsScreen(game: game, api: api, library: library),
-          ),
-        ),
+        onTap: () => onOpen(game),
         child: Container(
+          margin: const EdgeInsets.only(bottom: 10),
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            color: FluxColors.card,
-            border: Border.all(color: FluxColors.purple.withOpacity(.3)),
+            color: EpicColors.surface,
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(color: EpicColors.border),
           ),
           child: Row(
             children: [
-              // صورة مصغرة
               ClipRRect(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(3),
                 child: SizedBox(
-                  width: 62,
-                  height: 62,
-                  child: game.image.isNotEmpty
-                      ? Image.network(
-                          game.image,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => _thumbFallback(),
-                        )
-                      : _thumbFallback(),
+                  width: 64,
+                  height: 84,
+                  child: buildGameCover(game),
                 ),
               ),
               const SizedBox(width: 12),
-              // الاسم والتصنيف والسعر
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -148,46 +174,37 @@ class LibraryScreen extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                        color: FluxColors.textPrimary,
-                        fontWeight: FontWeight.bold,
+                        color: EpicColors.textPrimary,
                         fontSize: 14,
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
                     const SizedBox(height: 4),
                     Text(
                       game.categoryDisplay,
-                      style: const TextStyle(color: FluxColors.textMuted, fontSize: 11),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      game.finalPriceLabel,
-                      style: TextStyle(
-                        color: game.isFree ? FluxColors.cyan : FluxColors.pink,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
+                      style: const TextStyle(
+                        color: EpicColors.textSecondary,
+                        fontSize: 11,
                       ),
                     ),
+                    const SizedBox(height: 8),
+                    PriceTag(game: game, fontSize: 12, showBadge: false),
                   ],
                 ),
               ),
-              // زر الإزالة
               IconButton(
-                onPressed: () => library.remove(game.id),
-                icon: const Icon(Icons.delete_outline_rounded),
-                color: FluxColors.pink.withOpacity(.8),
+                onPressed: () => _remove(context),
+                icon: const Icon(
+                  Icons.delete_outline_rounded,
+                  color: EpicColors.textSecondary,
+                  size: 20,
+                ),
                 tooltip: 'إزالة من المكتبة',
               ),
             ],
           ),
         ),
       ),
-    );
-  }
-
-  Widget _thumbFallback() {
-    return Container(
-      color: FluxColors.surface,
-      child: const Icon(Icons.sports_esports_rounded, color: FluxColors.purple, size: 26),
     );
   }
 }

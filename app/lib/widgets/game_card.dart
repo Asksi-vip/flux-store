@@ -2,137 +2,123 @@ import 'package:flutter/material.dart';
 
 import '../models/game.dart';
 import '../theme/app_theme.dart';
+import 'price_tag.dart';
 
-/// بطاقة لعبة تُعرض في شبكة الألعاب (صورة + اسم + تصنيف + تقييم + سعر).
-class GameCard extends StatelessWidget {
-  final Game game;
-  final VoidCallback onTap;
-
-  const GameCard({super.key, required this.game, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        // إطار متدرج متوهج حول البطاقة
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(20),
-          gradient: FluxColors.pinkPurple,
-          boxShadow: neonGlow(FluxColors.purple, blur: 14),
-        ),
-        padding: const EdgeInsets.all(1.4),
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(19),
-            color: FluxColors.card,
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // صورة الغلاف
-              Expanded(
-                child: ClipRRect(
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(19)),
-                  child: game.image.isNotEmpty
-                      ? Image.network(
-                          game.image,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => _imageFallback(),
-                          loadingBuilder: (context, child, progress) =>
-                              progress == null ? child : _imageFallback(),
-                        )
-                      : _imageFallback(),
-                ),
-              ),
-              // معلومات اللعبة
-              Padding(
-                padding: const EdgeInsets.all(10),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      game.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: FluxColors.textPrimary,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      game.categoryDisplay,
-                      style: const TextStyle(color: FluxColors.textMuted, fontSize: 11),
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        const Icon(Icons.star_rounded, color: FluxColors.orange, size: 16),
-                        const SizedBox(width: 3),
-                        Text(
-                          game.rating.toStringAsFixed(1),
-                          style: const TextStyle(color: FluxColors.textMuted, fontSize: 11),
-                        ),
-                        const Spacer(),
-                        _priceWidget(),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
+/// صورة غلاف اللعبة مع بديل أنيق عند غياب الرابط أو فشل التحميل.
+/// (دالة عامة لأن الكاروسيل والمكتبة وصفحة التفاصيل كلها تستخدمها)
+Widget buildGameCover(Game game, {BoxFit fit = BoxFit.cover}) {
+  final String url = game.image.isNotEmpty ? game.image : game.banner;
+  if (url.isEmpty) {
+    return Container(
+      color: EpicColors.elevated,
+      alignment: Alignment.center,
+      child: const Icon(
+        Icons.sports_esports_outlined,
+        color: EpicColors.border,
+        size: 34,
       ),
     );
   }
-
-  /// عرض السعر: مجاني / سعر نهائي / سعر قديم مشطوب + سعر الخصم.
-  Widget _priceWidget() {
-    if (game.isFree) {
-      return const Text(
-        'مجاني',
-        style: TextStyle(
-          color: FluxColors.cyan,
-          fontSize: 12,
-          fontWeight: FontWeight.bold,
+  return Image.network(
+    url,
+    fit: fit,
+    loadingBuilder: (context, child, progress) {
+      if (progress == null) return child;
+      return Container(
+        color: EpicColors.elevated,
+        alignment: Alignment.center,
+        child: const SizedBox(
+          width: 22,
+          height: 22,
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: EpicColors.blue,
+          ),
         ),
       );
-    }
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (game.hasDiscount) ...[
-          Text(
-            game.priceLabel,
-            style: const TextStyle(
-              color: FluxColors.textMuted,
-              fontSize: 10,
-              decoration: TextDecoration.lineThrough,
-            ),
-          ),
-          const SizedBox(width: 4),
-        ],
-        Text(
-          game.finalPriceLabel,
-          style: const TextStyle(
-            color: FluxColors.pink,
-            fontSize: 13,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ],
-    );
-  }
+    },
+    errorBuilder: (context, error, stackTrace) => Container(
+      color: EpicColors.elevated,
+      alignment: Alignment.center,
+      child: const Icon(
+        Icons.videogame_asset_outlined,
+        color: EpicColors.border,
+        size: 34,
+      ),
+    ),
+  );
+}
 
-  /// بديل الصورة عند عدم توفرها.
-  Widget _imageFallback() {
-    return Container(
-      color: FluxColors.surface,
-      child: const Center(
-        child: Icon(Icons.sports_esports_rounded, size: 44, color: FluxColors.purple),
+/// بطاقة لعبة بأسلوب Epic Games: غلاف حاد الزوايا بنسبة 3:4 مع شارة خصم ومؤثر ضغط.
+class GameCard extends StatefulWidget {
+  const GameCard({super.key, required this.game, this.onTap});
+
+  final Game game;
+  final VoidCallback? onTap;
+
+  @override
+  State<GameCard> createState() => _GameCardState();
+}
+
+class _GameCardState extends State<GameCard> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final Game game = widget.game;
+    return GestureDetector(
+      onTapDown: (_) => setState(() => _pressed = true),
+      onTapUp: (_) => setState(() => _pressed = false),
+      onTapCancel: () => setState(() => _pressed = false),
+      onTap: widget.onTap,
+      child: AnimatedScale(
+        scale: _pressed ? 0.97 : 1,
+        duration: const Duration(milliseconds: 130),
+        curve: Curves.easeOut,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AspectRatio(
+              aspectRatio: 3 / 4,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  buildGameCover(game),
+                  if (game.hasDiscount)
+                    Positioned(
+                      top: 8,
+                      left: 8,
+                      child: DiscountBadge(percent: game.discountPercent),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              game.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: EpicColors.textPrimary,
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              game.categoryDisplay,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: EpicColors.textSecondary,
+                fontSize: 11,
+              ),
+            ),
+            const SizedBox(height: 6),
+            PriceTag(game: game, fontSize: 13),
+          ],
+        ),
       ),
     );
   }

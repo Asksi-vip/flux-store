@@ -4,251 +4,447 @@ import '../controllers/library_controller.dart';
 import '../models/game.dart';
 import '../services/api_service.dart';
 import '../theme/app_theme.dart';
-import '../widgets/banner_carousel.dart';
+import '../widgets/fade_in_slide.dart';
 import '../widgets/game_card.dart';
+import '../widgets/hero_carousel.dart';
+import '../widgets/page_fade_transition.dart';
+import '../widgets/price_tag.dart';
+import '../widgets/skeleton.dart';
 import '../widgets/status_views.dart';
 import 'game_details_screen.dart';
 import 'search_screen.dart';
 
-/// الشاشة الرئيسية: شريط علوي بالبحث + بانر متحرك + شبكة الألعاب.
+/// الشاشة الرئيسية بأسلوب متجر Epic Games: بانر سينمائي، خصومات، فئات، الأكثر رواجًا.
 class HomeScreen extends StatefulWidget {
-  final ApiService api;
-  final LibraryController library;
+  const HomeScreen({
+    super.key,
+    required this.controller,
+    required this.onOpenGame,
+  });
 
-  const HomeScreen({super.key, required this.api, required this.library});
+  final LibraryController controller;
+  final ValueChanged<Game> onOpenGame;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  bool _loading = true;
-  String? _error;
-  List<Game> _featured = [];
-  List<Game> _games = [];
+  late Future<List<Game>> _future = ApiService.instance.getGames();
 
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  /// تحميل المميزة والألعاب معًا (تُستخدم أيضًا للسحب للتحديث).
-  Future<void> _load() async {
+  Future<void> _reload() async {
     setState(() {
-      _loading = true;
-      _error = null;
+      _future = ApiService.instance.getGames();
     });
-    try {
-      final results = await Future.wait([
-        widget.api.getFeatured(),
-        widget.api.getGames(),
-      ]);
-      if (!mounted) return;
-      setState(() {
-        _featured = results[0];
-        _games = results[1];
-        _loading = false;
-      });
-    } on ApiException catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _error = e.message;
-        _loading = false;
-      });
-    }
-  }
-
-  /// فتح شاشة تفاصيل اللعبة.
-  void _openDetails(Game game) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => GameDetailsScreen(
-          game: game,
-          api: widget.api,
-          library: widget.library,
-        ),
-      ),
-    );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: SafeArea(
-        child: RefreshIndicator(
-          color: FluxColors.pink,
-          backgroundColor: FluxColors.surface,
-          onRefresh: _load,
-          child: CustomScrollView(
-            physics: const AlwaysScrollableScrollPhysics(),
-            slivers: [
-              // الشريط العلوي: الشعار
-              SliverToBoxAdapter(child: _buildHeader()),
-              // حقل البحث
-              SliverToBoxAdapter(child: _buildSearchField()),
-              // المحتوى حسب الحالة
-              if (_loading)
-                const SliverFillRemaining(hasScrollBody: false, child: LoadingView())
-              else if (_error != null)
-                SliverFillRemaining(
-                  hasScrollBody: false,
-                  child: ErrorView(message: _error!, onRetry: _load),
-                )
-              else if (_games.isEmpty)
-                const SliverFillRemaining(
-                  hasScrollBody: false,
-                  child: EmptyView(
-                    icon: Icons.sports_esports_rounded,
-                    title: 'لا توجد ألعاب بعد',
-                    subtitle: 'تأكد من تشغيل الخادم ثم اسحب للأسفل للتحديث',
-                  ),
-                )
-              else ...[
-                // البانر المتحرك للألعاب المميزة
-                if (_featured.isNotEmpty)
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 18, 16, 6),
-                      child: BannerCarousel(games: _featured, onGameTap: _openDetails),
-                    ),
-                  ),
-                // عنوان القسم
-                SliverToBoxAdapter(child: _sectionTitle('كل الألعاب', '${_games.length} لعبة')),
-                // شبكة الألعاب
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
-                  sliver: SliverGrid(
-                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 2,
-                      mainAxisSpacing: 14,
-                      crossAxisSpacing: 14,
-                      childAspectRatio: .66,
-                    ),
-                    delegate: SliverChildBuilderDelegate(
-                      (context, i) => GameCard(
-                        game: _games[i],
-                        onTap: () => _openDetails(_games[i]),
-                      ),
-                      childCount: _games.length,
-                    ),
-                  ),
+    return RefreshIndicator(
+      color: EpicColors.blue,
+      backgroundColor: EpicColors.surface,
+      onRefresh: _reload,
+      child: FutureBuilder<List<Game>>(
+        future: _future,
+        builder: (context, AsyncSnapshot<List<Game>> snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const _HomeSkeleton();
+          }
+          if (snapshot.hasError) {
+            return ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              children: [
+                SizedBox(height: MediaQuery.sizeOf(context).height * 0.3),
+                ErrorView(message: snapshot.error.toString(), onRetry: _reload),
+              ],
+            );
+          }
+          final List<Game> games = snapshot.data ?? const <Game>[];
+          if (games.isEmpty) {
+            return ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              children: const [
+                SizedBox(height: 120),
+                EmptyView(
+                  icon: Icons.storefront_rounded,
+                  title: 'المتجر فارغ حاليًا',
+                  message:
+                      'أضف ألعابًا من لوحة تحكم Django أو نفّذ أمر seed_games لتعبئتها ببيانات تجريبية',
                 ),
               ],
-            ],
-          ),
-        ),
+            );
+          }
+          return _buildStore(games);
+        },
       ),
     );
   }
 
-  /// الشريط العلوي: شعار FLUX بتدرج نيوني.
-  Widget _buildHeader() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-      child: Row(
-        children: [
-          Column(
+  Widget _buildStore(List<Game> games) {
+    // البانر: المميزة أولًا، وإن لم توجد نعرض أول خمس ألعاب
+    final List<Game> featured =
+        games.where((Game g) => g.isFeatured).toList(growable: false);
+    final List<Game> carousel =
+        featured.length >= 2 ? featured : games.take(5).toList();
+
+    // العروض: الألعاب المخفضة مرتبة من الأعلى خصمًا
+    final List<Game> deals = games.where((Game g) => g.hasDiscount).toList()
+      ..sort(
+        (Game a, Game b) => b.discountPercent.compareTo(a.discountPercent),
+      );
+
+    // الأكثر رواجًا: مرتبة حسب التقييم
+    final List<Game> topRated = [...games]
+      ..sort((Game a, Game b) => b.rating.compareTo(a.rating));
+
+    // الفئات الموجودة فعليًا في البيانات: اسم العرض ← قيمة الفئة
+    final Map<String, String> catValue = <String, String>{};
+    for (final Game g in games) {
+      catValue.putIfAbsent(g.categoryDisplay, () => g.category);
+    }
+    final List<String> catNames = catValue.keys.toList();
+
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: EdgeInsets.zero,
+      children: [
+        // ترويسة المتجر
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              ShaderMask(
-                shaderCallback: (bounds) => FluxColors.pinkPurple.createShader(bounds),
-                child: const Text(
-                  'FLUX',
-                  style: TextStyle(
-                    fontSize: 26,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 3,
-                    color: FluxColors.textPrimary,
-                  ),
+            children: const [
+              Text(
+                'اكتشف الألعاب',
+                style: TextStyle(
+                  color: EpicColors.textPrimary,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w800,
                 ),
               ),
-              const Text(
-                'متجرك للألعاب الأسطورية',
-                style: TextStyle(color: FluxColors.textMuted, fontSize: 11),
-              ),
-            ],
-          ),
-          const Spacer(),
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: FluxColors.surface,
-              border: Border.all(color: FluxColors.purple.withOpacity(.5)),
-            ),
-            child: const Icon(Icons.notifications_none_rounded, color: FluxColors.cyan, size: 22),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// حقل البحث (فتح شاشة البحث عند الضغط).
-  Widget _buildSearchField() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 6),
-      child: GestureDetector(
-        onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => SearchScreen(api: widget.api, library: widget.library)),
-        ),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          height: 50,
-          decoration: BoxDecoration(
-            color: FluxColors.surface,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: FluxColors.purple.withOpacity(.4)),
-          ),
-          child: const Row(
-            children: [
-              Icon(Icons.search_rounded, color: FluxColors.cyan, size: 22),
-              SizedBox(width: 10),
+              SizedBox(height: 4),
               Text(
-                'ابحث عن لعبة...',
-                style: TextStyle(color: FluxColors.textMuted, fontSize: 13),
+                'عروض حصرية وأحدث الإصدارات في متجر FLUX',
+                style: TextStyle(
+                  color: EpicColors.textSecondary,
+                  fontSize: 13,
+                ),
               ),
             ],
+          ),
+        ),
+        // البانر السينمائي المتحرك
+        HeroCarousel(games: carousel, onOpenGame: widget.onOpenGame),
+        const SizedBox(height: 24),
+        if (deals.isNotEmpty) ...[
+          _dealsSection(deals),
+          const SizedBox(height: 24),
+        ],
+        if (catNames.isNotEmpty) ...[
+          _categoriesSection(catNames, catValue),
+          const SizedBox(height: 24),
+        ],
+        // الأكثر رواجًا
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'الأكثر رواجًا',
+                style: TextStyle(
+                  color: EpicColors.textPrimary,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'أعلى تقييمات اللاعبين الآن',
+                style: TextStyle(color: EpicColors.textSecondary, fontSize: 12),
+              ),
+              const SizedBox(height: 14),
+              GridView.builder(
+                padding: EdgeInsets.zero,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: topRated.length,
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  crossAxisSpacing: 12,
+                  mainAxisSpacing: 20,
+                  childAspectRatio: 0.55,
+                ),
+                itemBuilder: (context, int i) {
+                  return FadeInSlide(
+                    delay: Duration(milliseconds: 50 * (i % 6)),
+                    child: GameCard(
+                      game: topRated[i],
+                      onTap: () => widget.onOpenGame(topRated[i]),
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(height: 24),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// قسم العروض بأسلوب Epic: بطاقات أفقية عريضة مع شارة الخصم وقيمة التوفير.
+  Widget _dealsSection(List<Game> deals) {
+    final int maxPercent = deals.first.discountPercent;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'عروض وخصومات',
+                style: TextStyle(
+                  color: EpicColors.textPrimary,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'توفير يصل إلى $maxPercent% على العناوين الكبيرة',
+                style: const TextStyle(
+                  color: EpicColors.textSecondary,
+                  fontSize: 12,
+                ),
+              ),
+              const SizedBox(height: 14),
+            ],
+          ),
+        ),
+        SizedBox(
+          height: 168,
+          child: ListView.separated(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            scrollDirection: Axis.horizontal,
+            itemCount: deals.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 12),
+            itemBuilder: (context, int i) {
+              final Game g = deals[i];
+              return FadeInSlide(
+                delay: Duration(milliseconds: 60 * (i % 6)),
+                child: GestureDetector(
+                  onTap: () => widget.onOpenGame(g),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: Container(
+                      width: 260,
+                      color: EpicColors.surface,
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 110,
+                            height: 168,
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                buildGameCover(g),
+                                Positioned(
+                                  top: 8,
+                                  left: 8,
+                                  child: DiscountBadge(
+                                    percent: g.discountPercent,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Expanded(
+                            child: Padding(
+                              padding: const EdgeInsets.all(12),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    g.name,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: EpicColors.textPrimary,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w800,
+                                      height: 1.3,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    g.categoryDisplay,
+                                    style: const TextStyle(
+                                      color: EpicColors.textSecondary,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                  const Spacer(),
+                                  PriceTag(game: g, fontSize: 13),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'وفّر \$${(g.price - g.finalPrice).toStringAsFixed(2)}',
+                                    style: const TextStyle(
+                                      color: EpicColors.cyan,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// قسم الفئات: شرائح بأسلوب Epic تنقلك للتصفح المفلتر.
+  Widget _categoriesSection(
+    List<String> catNames,
+    Map<String, String> catValue,
+  ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: const [
+              Text(
+                'استكشف الفئات',
+                style: TextStyle(
+                  color: EpicColors.textPrimary,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              SizedBox(height: 4),
+              Text(
+                'تصفح المتجر حسب النوع المفضل لديك',
+                style: TextStyle(color: EpicColors.textSecondary, fontSize: 12),
+              ),
+              SizedBox(height: 14),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final String name in catNames) _categoryChip(name, catValue),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _categoryChip(String name, Map<String, String> catValue) {
+    return GestureDetector(
+      onTap: () {
+        Navigator.of(context).push(
+          epicRoute(
+            SearchScreen(
+              initialCategory: catValue[name],
+              onOpenGame: (Game g) {
+                Navigator.of(context).push(
+                  epicRoute(
+                    GameDetailsScreen(game: g, controller: widget.controller),
+                  ),
+                );
+              },
+            ),
+          ),
+        );
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: EpicColors.surface,
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: EpicColors.border),
+        ),
+        child: Text(
+          name,
+          style: const TextStyle(
+            color: EpicColors.textPrimary,
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
           ),
         ),
       ),
     );
   }
+}
 
-  /// عنوان قسم مع عدد العناصر.
-  Widget _sectionTitle(String title, String count) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-      child: Row(
-        children: [
-          Container(
-            width: 4,
-            height: 18,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(4),
-              gradient: FluxColors.pinkPurple,
-              boxShadow: neonGlow(FluxColors.pink, blur: 8),
-            ),
+/// هيكل تحميل الرئيسية يحاكي شكل المحتوى النهائي (بانر + صور مصغرة + شبكة).
+class _HomeSkeleton extends StatelessWidget {
+  const _HomeSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      physics: const NeverScrollableScrollPhysics(),
+      padding: EdgeInsets.zero,
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: const [
+              SkeletonBox(height: 26, width: 180),
+              SizedBox(height: 8),
+              SkeletonBox(height: 14, width: 260),
+            ],
           ),
-          const SizedBox(width: 8),
-          Text(
-            title,
-            style: const TextStyle(
-              color: FluxColors.textPrimary,
-              fontSize: 17,
-              fontWeight: FontWeight.bold,
-            ),
+        ),
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 16),
+          child: SkeletonBox(height: 230, radius: 4),
+        ),
+        const SizedBox(height: 10),
+        SizedBox(
+          height: 64,
+          child: ListView.separated(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            scrollDirection: Axis.horizontal,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: 6,
+            separatorBuilder: (_, __) => const SizedBox(width: 8),
+            itemBuilder: (_, __) => const SkeletonBox(width: 104, height: 64),
           ),
-          const Spacer(),
-          Text(
-            count,
-            style: const TextStyle(color: FluxColors.textMuted, fontSize: 12),
-          ),
-        ],
-      ),
+        ),
+        const SizedBox(height: 24),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: SkeletonBox(height: 20, width: 140),
+        ),
+        const SizedBox(height: 16),
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 16),
+          child: LoadingGrid(itemCount: 4),
+        ),
+      ],
     );
   }
 }

@@ -2,41 +2,43 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../controllers/library_controller.dart';
 import '../models/game.dart';
 import '../services/api_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/fade_in_slide.dart';
 import '../widgets/game_card.dart';
+import '../widgets/page_fade_transition.dart';
 import '../widgets/status_views.dart';
 import 'game_details_screen.dart';
 
-/// شاشة البحث: كتابة اسم اللعبة + فلترة حسب التصنيف + عرض النتائج.
+/// شاشة تصفح وبحث الألعاب بأسلوب Epic: بحث فوري مع فلاتر فئات وسعر.
 class SearchScreen extends StatefulWidget {
-  final ApiService api;
-  final LibraryController library;
+  const SearchScreen({
+    super.key,
+    this.initialCategory,
+    required this.onOpenGame,
+  });
 
-  const SearchScreen({super.key, required this.api, required this.library});
+  /// فئة مبدئية عند الفتح من شريحة فئة في الرئيسية.
+  final String? initialCategory;
+  final ValueChanged<Game> onOpenGame;
 
   @override
   State<SearchScreen> createState() => _SearchScreenState();
 }
 
 class _SearchScreenState extends State<SearchScreen> {
-  final TextEditingController _controller = TextEditingController();
+  final TextEditingController _searchController = TextEditingController();
   Timer? _debounce;
+  String? _category;
+  String _priceFilter = 'all';
+  late Future<List<Game>> _future;
 
-  String _category = '';
-  bool _loading = false;
-  bool _searched = false;
-  String? _error;
-  List<Game> _results = [];
-
-  /// التصنيفات المدعومة للفلترة (القيمة + الاسم المعروض).
+  /// فئات الـ API الثمانية المعروفة (القيمة ← الاسم المعروض).
   static const List<(String, String)> _categories = [
-    ('', 'الكل'),
     ('action', 'أكشن'),
     ('adventure', 'مغامرات'),
-    ('rpg', 'RPG'),
+    ('rpg', 'ألعاب أدوار'),
     ('racing', 'سباقات'),
     ('shooter', 'تصويب'),
     ('sports', 'رياضة'),
@@ -44,173 +46,272 @@ class _SearchScreenState extends State<SearchScreen> {
     ('sandbox', 'عالم مفتوح'),
   ];
 
+  /// خيارات فلترة السعر المربوطة بمعاملات الـ API الفعلية.
+  static const List<(String, String)> _priceOptions = [
+    ('all', 'كل الأسعار'),
+    ('free', 'مجاني'),
+    ('low', 'أقل من 20$'),
+    ('mid', '20$ - 50$'),
+    ('high', 'أكثر من 50$'),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _category = widget.initialCategory;
+    _future = _fetch();
+  }
+
   @override
   void dispose() {
-    _controller.dispose();
     _debounce?.cancel();
+    _searchController.dispose();
     super.dispose();
   }
 
-  /// بحث مؤجل (Debounce) حتى يتوقف المستخدم عن الكتابة.
-  void _onQueryChanged(String value) {
-    setState(() {}); // لتحديث زر المسح
-    _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 450), _runSearch);
-  }
-
-  /// تنفيذ البحث حسب النص والتصنيف المحدد.
-  Future<void> _runSearch() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      final results = await widget.api.getGames(
-        search: _controller.text.trim(),
-        category: _category,
-      );
-      if (!mounted) return;
-      setState(() {
-        _results = results;
-        _searched = true;
-        _loading = false;
-      });
-    } on ApiException catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _error = e.message;
-        _loading = false;
-        _searched = true;
-      });
+  /// بناء الطلب الحالي حسب البحث والفئة والسعر المختارين.
+  Future<List<Game>> _fetch() async {
+    double? minPrice;
+    double? maxPrice;
+    switch (_priceFilter) {
+      case 'free':
+        minPrice = 0;
+        maxPrice = 0;
+        break;
+      case 'low':
+        maxPrice = 20;
+        break;
+      case 'mid':
+        minPrice = 20;
+        maxPrice = 50;
+        break;
+      case 'high':
+        minPrice = 50;
+        break;
+      default:
+        break;
     }
+    return ApiService.instance.getGames(
+      search: _searchController.text,
+      category: _category,
+      minPrice: minPrice,
+      maxPrice: maxPrice,
+    );
   }
 
-  /// فتح شاشة تفاصيل اللعبة.
-  void _openDetails(Game game) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => GameDetailsScreen(
-          game: game,
-          api: widget.api,
-          library: widget.library,
-        ),
-      ),
-    );
+  void _onSearchChanged(String value) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 450), () {
+      if (mounted) {
+        setState(() {
+          _future = _fetch();
+        });
+      }
+    });
+  }
+
+  void _applyFilters() {
+    _debounce?.cancel();
+    setState(() {
+      _future = _fetch();
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('البحث')),
+      backgroundColor: EpicColors.background,
+      appBar: AppBar(
+        automaticallyImplyLeading:
+            ModalRoute.of(context)?.isFirst != true,
+        title: const Text('تصفح الألعاب'),
+      ),
       body: Column(
         children: [
           // حقل البحث
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 6, 16, 10),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
             child: TextField(
-              controller: _controller,
-              autofocus: true,
-              onChanged: _onQueryChanged,
-              style: const TextStyle(color: FluxColors.textPrimary, fontSize: 14),
-              decoration: InputDecoration(
-                hintText: 'ابحث باسم اللعبة...',
-                prefixIcon: const Icon(Icons.search_rounded, color: FluxColors.cyan, size: 22),
-                suffixIcon: _controller.text.isEmpty
-                    ? null
-                    : IconButton(
-                        icon: const Icon(Icons.close_rounded, color: FluxColors.textMuted, size: 20),
-                        onPressed: () {
-                          _controller.clear();
-                          setState(() {});
-                          _runSearch();
-                        },
-                      ),
+              controller: _searchController,
+              onChanged: _onSearchChanged,
+              textInputAction: TextInputAction.search,
+              style: const TextStyle(
+                color: EpicColors.textPrimary,
+                fontSize: 14,
+              ),
+              decoration: const InputDecoration(
+                hintText: 'ابحث عن لعبة بالاسم أو الوصف...',
+                prefixIcon: Icon(
+                  Icons.search_rounded,
+                  color: EpicColors.textSecondary,
+                  size: 20,
+                ),
+                isDense: true,
               ),
             ),
           ),
-          // شرائح التصنيفات
-          SizedBox(
-            height: 46,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              itemCount: _categories.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 8),
-              itemBuilder: (context, i) {
-                final (value, label) = _categories[i];
-                final selected = value == _category;
-                return GestureDetector(
+          _chipRow(
+            height: 44,
+            children: [
+              _chip(
+                label: 'الكل',
+                selected: _category == null,
+                onTap: () {
+                  _category = null;
+                  _applyFilters();
+                },
+              ),
+              for (final (String value, String label) in _categories)
+                _chip(
+                  label: label,
+                  selected: _category == value,
                   onTap: () {
-                    setState(() => _category = value);
-                    _runSearch();
+                    _category = value;
+                    _applyFilters();
                   },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(14),
-                      gradient: selected ? FluxColors.pinkPurple : null,
-                      color: selected ? null : FluxColors.surface,
-                      border: selected
-                          ? null
-                          : Border.all(color: FluxColors.textMuted.withOpacity(.3)),
-                      boxShadow: selected ? neonGlow(FluxColors.pink, blur: 12) : null,
-                    ),
-                    child: Text(
-                      label,
-                      style: TextStyle(
-                        color: selected ? FluxColors.textPrimary : FluxColors.textMuted,
-                        fontSize: 13,
-                        fontWeight: selected ? FontWeight.bold : FontWeight.normal,
-                      ),
-                    ),
+                ),
+            ],
+          ),
+          _chipRow(
+            height: 40,
+            children: [
+              for (final (String value, String label) in _priceOptions)
+                _priceChip(
+                  label: label,
+                  selected: _priceFilter == value,
+                  onTap: () {
+                    _priceFilter = value;
+                    _applyFilters();
+                  },
+                ),
+            ],
+          ),
+          Expanded(
+            child: FutureBuilder<List<Game>>(
+              future: _future,
+              builder: (context, AsyncSnapshot<List<Game>> snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const LoadingGrid(itemCount: 6);
+                }
+                if (snapshot.hasError) {
+                  return ErrorView(
+                    message: snapshot.error.toString(),
+                    onRetry: _applyFilters,
+                  );
+                }
+                final List<Game> results = snapshot.data ?? const <Game>[];
+                if (results.isEmpty) {
+                  return const EmptyView(
+                    icon: Icons.search_off_rounded,
+                    title: 'لا توجد نتائج',
+                    message: 'جرّب كلمة بحث مختلفة أو غيّر الفلاتر المختارة',
+                  );
+                }
+                return GridView.builder(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  itemCount: results.length,
+                  gridDelegate:
+                      const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    crossAxisSpacing: 12,
+                    mainAxisSpacing: 20,
+                    childAspectRatio: 0.55,
                   ),
+                  itemBuilder: (context, int i) {
+                    return FadeInSlide(
+                      delay: Duration(milliseconds: 40 * (i % 6)),
+                      child: GameCard(
+                        game: results[i],
+                        onTap: () => widget.onOpenGame(results[i]),
+                      ),
+                    );
+                  },
                 );
               },
             ),
-          ),
-          // منطقة النتائج
-          Expanded(
-            child: _buildResults(),
           ),
         ],
       ),
     );
   }
 
-  /// عرض النتائج حسب الحالة الحالية.
-  Widget _buildResults() {
-    if (_loading) return const LoadingView();
-    if (_error != null) {
-      return ErrorView(message: _error!, onRetry: _runSearch);
-    }
-    if (!_searched) {
-      return const EmptyView(
-        icon: Icons.search_rounded,
-        title: 'ابحث عن لعبتك المفضلة',
-        subtitle: 'اكتب اسم اللعبة أو اختر تصنيفًا من الأعلى',
-      );
-    }
-    if (_results.isEmpty) {
-      return const EmptyView(
-        icon: Icons.search_off_rounded,
-        title: 'لا توجد نتائج مطابقة',
-        subtitle: 'جرّب كلمة أخرى أو تصنيفًا مختلفًا',
-      );
-    }
-    return GridView.builder(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 20),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        mainAxisSpacing: 14,
-        crossAxisSpacing: 14,
-        childAspectRatio: .66,
+  /// صف شرائح أفقي قابل للتمرير.
+  Widget _chipRow({required double height, required List<Widget> children}) {
+    return SizedBox(
+      height: height,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        children: children,
       ),
-      itemCount: _results.length,
-      itemBuilder: (context, i) => GameCard(
-        game: _results[i],
-        onTap: () => _openDetails(_results[i]),
+    );
+  }
+
+  /// شريحة فئة بأسلوب Epic: تتحول للأزرق عند الاختيار.
+  Widget _chip({
+    required String label,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    return Padding(
+      padding: const EdgeInsetsDirectional.only(end: 8),
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: selected ? EpicColors.blue : EpicColors.surface,
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(
+              color: selected ? EpicColors.blue : EpicColors.border,
+            ),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              color: selected ? EpicColors.textOnBadge : EpicColors.textPrimary,
+              fontSize: 12.5,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// شريحة السعر بنمط ثانوي أخف.
+  Widget _priceChip({
+    required String label,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    return Padding(
+      padding: const EdgeInsetsDirectional.only(end: 8),
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: selected ? EpicColors.elevated : Colors.transparent,
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(
+              color: selected ? EpicColors.cyan : EpicColors.border,
+            ),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              color: selected ? EpicColors.cyan : EpicColors.textSecondary,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
       ),
     );
   }

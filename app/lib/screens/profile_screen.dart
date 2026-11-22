@@ -1,246 +1,328 @@
 import 'package:flutter/material.dart';
 
+import '../config.dart';
 import '../controllers/library_controller.dart';
 import '../services/api_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/fade_in_slide.dart';
 
-/// شاشة الملف الشخصي: بطاقة اللاعب، إحصائيات المكتبة، وحالة الخادم.
+/// حساب اللاعب بأسلوب Epic: إحصائيات حقيقية من المكتبة + حالة الخادم + معلومات الربط.
 class ProfileScreen extends StatefulWidget {
-  final ApiService api;
-  final LibraryController library;
+  const ProfileScreen({super.key, required this.controller});
 
-  const ProfileScreen({super.key, required this.api, required this.library});
+  final LibraryController controller;
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  bool? _serverOnline;
-  bool _checking = false;
+  late Future<bool> _serverFuture = ApiService.instance.isServerOnline();
 
-  /// فحص اتصال التطبيق بخادم الـ API.
-  Future<void> _checkServer() async {
-    setState(() => _checking = true);
-    final ok = await widget.api.isServerOnline();
-    if (!mounted) return;
+  Future<void> _refreshServer() async {
     setState(() {
-      _serverOnline = ok;
-      _checking = false;
+      _serverFuture = ApiService.instance.isServerOnline();
     });
   }
 
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: widget.library,
+      listenable: widget.controller,
       builder: (context, _) {
-        return Scaffold(
-          appBar: AppBar(title: const Text('حسابي')),
-          body: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              // بطاقة اللاعب المتوهجة
-              Container(
-                padding: const EdgeInsets.symmetric(vertical: 24),
+        final List<Game> games = widget.controller.games;
+        final double totalValue = games.fold<double>(
+          0,
+          (double s, Game g) => s + g.finalPrice,
+        );
+        final double savings = games.fold<double>(
+          0,
+          (double s, Game g) => s + (g.price - g.finalPrice),
+        );
+        final double avgRating = games.isEmpty
+            ? 0
+            : games.map((Game g) => g.rating).reduce((double a, double b) => a + b) /
+                games.length;
+
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
+          children: [
+            // بطاقة الملف الشخصي
+            FadeInSlide(
+              child: Container(
+                padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(24),
-                  color: FluxColors.surface,
-                  border: Border.all(color: FluxColors.pink.withOpacity(.4)),
-                  boxShadow: [BoxShadow(color: FluxColors.pink.withOpacity(.15), blurRadius: 24)],
+                  color: EpicColors.surface,
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: EpicColors.border),
                 ),
-                child: Column(
+                child: Row(
                   children: [
-                    // الصورة الرمزية بإطار متدرج
                     Container(
-                      padding: const EdgeInsets.all(3),
-                      decoration: const BoxDecoration(
+                      width: 56,
+                      height: 56,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        gradient: FluxColors.pinkPurple,
-                      ),
-                      child: Container(
-                        width: 72,
-                        height: 72,
-                        decoration: const BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: FluxColors.card,
+                        gradient: const LinearGradient(
+                          colors: [EpicColors.blue, EpicColors.cyan],
                         ),
-                        child: const Icon(Icons.person_rounded, color: FluxColors.textPrimary, size: 34),
+                        boxShadow: [
+                          BoxShadow(
+                            color: EpicColors.blue.withOpacity(.4),
+                            blurRadius: 18,
+                          ),
+                        ],
+                      ),
+                      child: const Text(
+                        'F',
+                        style: TextStyle(
+                          color: EpicColors.textOnBadge,
+                          fontSize: 24,
+                          fontWeight: FontWeight.w900,
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 10),
-                    const Text(
-                      'Flux Player',
-                      style: TextStyle(
-                        color: FluxColors.textPrimary,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 18,
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: const [
+                          Text(
+                            'لاعب FLUX',
+                            style: TextStyle(
+                              color: EpicColors.textPrimary,
+                              fontSize: 17,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          SizedBox(height: 4),
+                          Text(
+                            'حساب محلي — مكتبتك محفوظة على جهازك',
+                            style: TextStyle(
+                              color: EpicColors.textSecondary,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
-                    const Text(
-                      'لاعب أسطوري منذ 2026',
-                      style: TextStyle(color: FluxColors.textMuted, fontSize: 12),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: 16),
-              // الإحصائيات
-              Row(
-                children: [
-                  _statCard(
-                    icon: Icons.videogame_asset_rounded,
-                    color: FluxColors.pink,
-                    value: '${widget.library.games.length}',
-                    label: 'ألعابي',
-                  ),
-                  const SizedBox(width: 10),
-                  _statCard(
-                    icon: Icons.timer_rounded,
-                    color: FluxColors.cyan,
-                    value: '128',
-                    label: 'ساعة لعب',
-                  ),
-                  const SizedBox(width: 10),
-                  _statCard(
-                    icon: Icons.local_fire_department_rounded,
-                    color: FluxColors.orange,
-                    value: '4.8',
-                    label: 'مستواي',
-                  ),
-                ],
+            ),
+            const SizedBox(height: 20),
+            // الإحصائيات الحقيقية
+            const Text(
+              'إحصائياتي',
+              style: TextStyle(
+                color: EpicColors.textPrimary,
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
               ),
-              const SizedBox(height: 16),
-              // حالة الخادم
-              _infoTile(
-                icon: Icons.dns_rounded,
-                color: FluxColors.cyan,
-                title: 'حالة الخادم',
-                subtitle: _checking
-                    ? 'جارٍ الفحص...'
-                    : _serverOnline == null
-                        ? 'اضغط للفحص'
-                        : _serverOnline!
-                            ? 'متصل — الـ API يعمل بنجاح ✅'
-                            : 'غير متصل — تأكد من تشغيل الخادم ❌',
-                onTap: _checking ? null : _checkServer,
-                trailing: _checking
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(color: FluxColors.cyan, strokeWidth: 2),
-                      )
-                    : const Icon(Icons.refresh_rounded, color: FluxColors.textMuted, size: 22),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'أرقام محسوبة مباشرة من مكتبتك',
+              style: TextStyle(color: EpicColors.textSecondary, fontSize: 12),
+            ),
+            const SizedBox(height: 14),
+            GridView.count(
+              crossAxisCount: 2,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              mainAxisSpacing: 12,
+              crossAxisSpacing: 12,
+              childAspectRatio: 2.4,
+              padding: EdgeInsets.zero,
+              children: [
+                _statCard(
+                  'ألعابي',
+                  '${games.length}',
+                  Icons.video_library_rounded,
+                ),
+                _statCard(
+                  'قيمة المكتبة',
+                  '\$${totalValue.toStringAsFixed(2)}',
+                  Icons.account_balance_wallet_rounded,
+                ),
+                _statCard(
+                  'إجمالي التوفير',
+                  '\$${savings.toStringAsFixed(2)}',
+                  Icons.local_offer_rounded,
+                ),
+                _statCard(
+                  'متوسط التقييم',
+                  avgRating.toStringAsFixed(1),
+                  Icons.star_rounded,
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            // حالة الاتصال بالخادم
+            const Text(
+              'الاتصال',
+              style: TextStyle(
+                color: EpicColors.textPrimary,
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
               ),
-              _infoTile(
-                icon: Icons.info_outline_rounded,
-                color: FluxColors.purple,
-                title: 'عن Flux',
-                subtitle: 'الإصدار 1.0.0 — متجر ألعاب تجريبي متصل بـ Django REST API',
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'حالة خادم الـ API ومعلومات الربط',
+              style: TextStyle(color: EpicColors.textSecondary, fontSize: 12),
+            ),
+            const SizedBox(height: 14),
+            FadeInSlide(
+              child: FutureBuilder<bool>(
+                future: _serverFuture,
+                builder: (context, AsyncSnapshot<bool> snapshot) {
+                  final bool online = snapshot.data == true;
+                  final Color dotColor = online
+                      ? EpicColors.success
+                      : EpicColors.danger;
+                  return Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: EpicColors.surface,
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: EpicColors.border),
+                    ),
+                    child: Row(
+                      children: [
+                        AnimatedContainer(
+                          duration: const Duration(milliseconds: 300),
+                          width: 10,
+                          height: 10,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: online
+                                ? EpicColors.success
+                                : (snapshot.connectionState ==
+                                        ConnectionState.waiting
+                                    ? EpicColors.textSecondary
+                                    : EpicColors.danger),
+                            boxShadow: [
+                              BoxShadow(
+                                color: dotColor.withOpacity(.6),
+                                blurRadius: 10,
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            snapshot.connectionState == ConnectionState.waiting
+                                ? 'جارٍ فحص الخادم...'
+                                : (online ? 'الخادم متصل ويعمل' : 'تعذر الوصول إلى الخادم'),
+                            style: const TextStyle(
+                              color: EpicColors.textPrimary,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: _refreshServer,
+                          icon: const Icon(
+                            Icons.refresh_rounded,
+                            color: EpicColors.textSecondary,
+                            size: 20,
+                          ),
+                          tooltip: 'إعادة الفحص',
+                        ),
+                      ],
+                    ),
+                  );
+                },
               ),
-              _infoTile(
-                icon: Icons.settings_rounded,
-                color: FluxColors.orange,
-                title: 'الإعدادات',
-                subtitle: 'قريبًا...',
-              ),
-            ],
-          ),
+            ),
+            const SizedBox(height: 12),
+            _infoRow('عنوان الخادم', AppConfig.baseUrl),
+            _infoRow('نقطة الألعاب', '${AppConfig.apiBaseUrl}/games/'),
+            _infoRow('إصدار التطبيق', '1.0.0'),
+          ],
         );
       },
     );
   }
 
-  /// بطاقة إحصائية صغيرة.
-  Widget _statCard({
-    required IconData icon,
-    required Color color,
-    required String value,
-    required String label,
-  }) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 16),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(18),
-          color: FluxColors.card,
-          border: Border.all(color: color.withOpacity(.35)),
-        ),
-        child: Column(
-          children: [
-            Icon(icon, color: color, size: 24),
-            const SizedBox(height: 8),
-            Text(
-              value,
-              style: const TextStyle(
-                color: FluxColors.textPrimary,
-                fontWeight: FontWeight.bold,
-                fontSize: 17,
-              ),
+  /// بطاقة إحصائية صغيرة: أيقونة + قيمة كبيرة + وصف.
+  Widget _statCard(String label, String value, IconData icon) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: EpicColors.surface,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: EpicColors.border),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: EpicColors.cyan, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: EpicColors.textPrimary,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  label,
+                  style: const TextStyle(
+                    color: EpicColors.textSecondary,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
             ),
-            Text(label, style: const TextStyle(color: FluxColors.textMuted, fontSize: 11)),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
-  /// بطاقة معلومات/إجراء.
-  Widget _infoTile({
-    required IconData icon,
-    required Color color,
-    required String title,
-    required String subtitle,
-    VoidCallback? onTap,
-    Widget? trailing,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            color: FluxColors.card,
-            border: Border.all(color: color.withOpacity(.3)),
+  /// صف معلومة: وصف رمادي فوق القيمة.
+  Widget _infoRow(String label, String value) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: EpicColors.surface,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: EpicColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              color: EpicColors.textSecondary,
+              fontSize: 11,
+            ),
           ),
-          child: Row(
-            children: [
-              Container(
-                width: 42,
-                height: 42,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  color: color.withOpacity(.15),
-                ),
-                child: Icon(icon, color: color, size: 22),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        color: FluxColors.textPrimary,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      subtitle,
-                      style: const TextStyle(color: FluxColors.textMuted, fontSize: 12, height: 1.5),
-                    ),
-                  ],
-                ),
-              ),
-              if (trailing != null) trailing,
-            ],
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: const TextStyle(
+              color: EpicColors.textPrimary,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
           ),
-        ),
+        ],
       ),
     );
   }

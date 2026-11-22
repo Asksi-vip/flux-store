@@ -2,39 +2,47 @@ import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
 
-/// عرض التقييم بالنجوم (نجوم كاملة ونصفية حسب القيمة).
+/// نجوم التقييم بسماوي Epic مع عرض الرقم بجانبها (اختياري).
 class RatingStars extends StatelessWidget {
-  final double rating;
-  final double size;
-  final Color? color;
-
   const RatingStars({
     super.key,
     required this.rating,
-    this.size = 18,
-    this.color,
+    this.size = 16,
+    this.showValue = false,
   });
+
+  final double rating;
+  final double size;
+  final bool showValue;
 
   @override
   Widget build(BuildContext context) {
-    final starColor = color ?? FluxColors.orange;
+    final double clamped = rating.clamp(0, 5).toDouble();
     return Row(
       mainAxisSize: MainAxisSize.min,
-      children: List.generate(5, (i) {
-        final filled = rating >= i + 1;
-        final half = !filled && rating > i + .2;
-        return Icon(
-          filled
-              ? Icons.star_rounded
-              : half
-                  ? Icons.star_half_rounded
-                  : Icons.star_border_rounded,
-          color: filled || half
-              ? starColor
-              : FluxColors.textMuted.withOpacity(.35),
-          size: size,
-        );
-      }),
+      children: [
+        for (int i = 1; i <= 5; i++)
+          Icon(
+            clamped >= i
+                ? Icons.star_rounded
+                : (clamped >= i - 0.5
+                    ? Icons.star_half_rounded
+                    : Icons.star_border_rounded),
+            size: size,
+            color: clamped >= i - 0.5 ? EpicColors.cyan : EpicColors.border,
+          ),
+        if (showValue) ...[
+          const SizedBox(width: 6),
+          Text(
+            clamped.toStringAsFixed(1),
+            style: const TextStyle(
+              color: EpicColors.textSecondary,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ],
     );
   }
 }
