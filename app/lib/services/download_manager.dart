@@ -69,11 +69,18 @@ class DownloadTask {
     required this.game,
     required this.files,
     this.state = DownloadTaskState.paused,
+    this.installed = false,
   });
 
   final Game game;
   final List<FileTask> files;
   DownloadTaskState state;
+
+  /// هل اللعبة مثبتة فعليًا على الجهاز (بعد تثبيت الـ APK)؟
+  bool installed;
+
+  /// جارٍ نقل ملفات OBB/Data تلقائيًا إلى مكانها الصحيح بعد التثبيت.
+  bool moving = false;
   int speed = 0; // بايت/ثانية (آخر قياس)
 
   int get totalBytes {
@@ -105,6 +112,21 @@ class DownloadTask {
     return null;
   }
 
+  /// حزمة اللعبة المستهدفة — لمسارات OBB/Data وكشف التثبيت والتشغيل.
+  String get package {
+    final String g = game.packageName;
+    if (g.isNotEmpty) return g;
+    final String d = game.download?.packageName ?? '';
+    return d.isNotEmpty ? d : 'com.fluxstore.games';
+  }
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'game': game.toJson(),
+        'state': state.name,
+        'installed': installed,
+        'files': files.map((FileTask f) => f.toJson()).toList(),
+      };
+
   /// هل انقطع الاتصال أثناء التحميل؟
   bool get waiting => state == DownloadTaskState.waitingNetwork;
 }
@@ -113,12 +135,21 @@ class DownloadTask {
 /// تحميل حقيقي بمقاطع، استئناف من نفس النقطة عبر Range، عودة تلقائية عند
 /// عودة الشبكة بعد الانقطاع، حفظ حالة المهام وإكمالها بعد إعادة فتح التطبيق،
 /// وحفظ ملفات OBB/Data في المسار الصحيح تلقائيًا عند توفر الصلاحية.
-class DownloadManager extends ChangeNotifier {
+class DownloadManager extends ChangeNotifier with WidgetsBindingObserver {
   DownloadManager._() {
     _dio = Dio(BaseOptions(
       connectTimeout: const Duration(seconds: 15),
       receiveTimeout: const Duration(seconds: 60),
     ));
+    // مراقبة دورة الحياة: عند العودة من نافذة تثبيت أندرويد ننقل OBB/Data تلقائيًا
+    try {
+      WidgetsBinding.instance.addObserver(this);
+    } catch (_) {}
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _postInstallFlow();
   }
 
   static final DownloadManager instance = DownloadManager._();
@@ -265,6 +296,140 @@ class DownloadManager extends ChangeNotifier {
     return false;
   }
 
+  /// هل اللعبة مثبتة على الجهاز؟ (فحص حقيقي عبر PackageManager)
+  Future<bool> isGameInstalled(String pkg) async {
+    if (!Platform.isAndroid || pkg.isEmpty) return false;
+    try {
+      final bool? ok = await _bgChannel.invokeMethod<bool>(
+        'isPackageInstalled',
+        <String, dynamic>{'pkg': pkg},
+      );
+      return ok ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// تشغيل اللعبة المثبتة (أيقونتها في مشغّل النظام).
+  Future<bool> launchGame(String pkg) async {
+    if (!Platform.isAndroid || pkg.isEmpty) return false;
+    try {
+      final bool? ok = await _bgChannel.invokeMethod<bool>(
+        'launchApp',
+        <String, dynamic>{'pkg': pkg},
+      );
+      return ok ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // ---------- نقل ملفات OBB/Data تلقائيًا بعد التثبيت (بدون تدخل المستخدم) ----------
+
+  bool _postInstallRunning = false;
+
+  /// عند العودة من نافذة التثبيت (أو فتح التطبيق): لكل لعبة مكتملة ومثبتة —
+  /// ننقل OBB/Data من مجلد التطبيق البديل إلى Android/obb و Android/data
+  /// مباشرة، فتصبح اللعبة جاهزة للتشغيل دون أي خطوة يدوية.
+  Future<void> _postInstallFlow() async {
+    if (_postInstallRunning || !Platform.isAndroid) return;
+    _postInstallRunning = true;
+    try {
+      for (final DownloadTask t in List<DownloadTask>.from(_tasks.values)) {
+        if (t.state != DownloadTaskState.completed) continue;
+        final String pkg = t.package;
+        final bool wasInstalled = t.installed;
+        if (!await isGameInstalled(pkg)) continue;
+        t.installed = true;
+
+        bool moved = false;
+        for (final FileTask f in t.files) {
+          if (!(f.file.isObb || f.file.isData) || f.localPath == null) continue;
+          final String target = _properTargetPath(t.game, f.file);
+          if (target.isEmpty || _samePath(f.localPath!, target)) continue;
+
+          final String dir = target.substring(0, target.lastIndexOf('/'));
+          if (!_canWriteSync(dir)) {
+            // الصلاحية غير ممنوحة بعد — طلبها الآن (تعود النتيجة عند الرجوع)
+            await _ensurePermissions();
+            if (!_canWriteSync(dir)) continue; // نحاول مجددًا عند العودة القادمة
+          }
+          t.moving = true;
+          notifyListeners();
+          final bool ok = await _moveFile(f.localPath!, target);
+          if (ok) {
+            f.localPath = target;
+            moved = true;
+          }
+        }
+        t.moving = false;
+        if (!wasInstalled || moved) {
+          await _persist();
+          notifyListeners();
+          // إشعار نظام: اللعبة جاهزة للتشغيل الآن
+          try {
+            _bgChannel.invokeMethod(
+              'notifyReady',
+              <String, dynamic>{'title': '${t.game.name} جاهزة للتشغيل ✓'},
+            );
+          } catch (_) {}
+        }
+      }
+    } catch (_) {}
+    _postInstallRunning = false;
+  }
+
+  /// المسار الصحيح النهائي للملف داخل مجلدات النظام (نفس منطق _resolvePath).
+  String _properTargetPath(Game game, DownloadFile f) {
+    final String pkg = game.packageName.isNotEmpty
+        ? game.packageName
+        : (game.download?.packageName.isNotEmpty ?? false
+            ? game.download!.packageName
+            : 'com.fluxstore.games');
+    if (f.isObb) {
+      final int vc = f.versionCode > 0
+          ? f.versionCode
+          : (game.download?.versionCode ?? 0);
+      return '/storage/emulated/0/Android/obb/$pkg/main.${vc > 0 ? vc : 1}.$pkg.obb';
+    }
+    if (f.isData) {
+      String name = _fileNameFromUrl(f.url);
+      if (name.isEmpty) name = 'file_${f.id}.bin';
+      return '/storage/emulated/0/Android/data/$pkg/files/$name';
+    }
+    return '';
+  }
+
+  /// نقل ملف فعلي (rename أو نسخ+حذف عبر نقاط تحميل مختلفة).
+  Future<bool> _moveFile(String from, String to) async {
+    try {
+      final File src = File(from);
+      if (!src.existsSync() || src.lengthSync() <= 0) return false;
+      final Directory dir = Directory(to.substring(0, to.lastIndexOf('/')));
+      if (!dir.existsSync()) dir.createSync(recursive: true);
+      final File dst = File(to);
+      if (dst.existsSync()) dst.deleteSync();
+      try {
+        src.renameSync(to);
+        return true;
+      } catch (_) {
+        final IOSink sink = dst.openWrite(mode: FileMode.write);
+        await sink.addStream(src.openRead());
+        await sink.flush();
+        await sink.close();
+        src.deleteSync();
+        return true;
+      }
+    } catch (_) {
+      return false;
+    }
+  }
+
+  bool _samePath(String a, String b) {
+    String norm(String s) => s.replaceAll('\\', '/').toLowerCase();
+    return norm(a) == norm(b);
+  }
+
   // ---------- الاستعادة من التخزين المحلي ----------
 
   /// استعادة المهام بعد إعادة فتح التطبيق + إكمال ما كان بانتظار الشبكة.
@@ -297,7 +462,12 @@ class DownloadManager extends ChangeNotifier {
             if (st == DownloadTaskState.downloading) {
               st = DownloadTaskState.waitingNetwork;
             }
-            _tasks[game.id] = DownloadTask(game: game, files: files, state: st);
+            _tasks[game.id] = DownloadTask(
+              game: game,
+              files: files,
+              state: st,
+              installed: map['installed'] == true,
+            );
           } catch (_) {}
         }
       }
@@ -307,17 +477,15 @@ class DownloadManager extends ChangeNotifier {
     for (final DownloadTask t in tasks) {
       if (t.waiting) resume(t.game.id);
     }
+    // نقل تلقائي لأي لعبة مثبتة ما زالت ملفاتها في مجلد التطبيق البديل
+    unawaited(_postInstallFlow());
   }
 
   Future<void> _persist() async {
     try {
       final SharedPreferences prefs = await SharedPreferences.getInstance();
       final List<Map<String, dynamic>> list = _tasks.values
-          .map((DownloadTask t) => <String, dynamic>{
-                'game': t.game.toJson(),
-                'state': t.state.name,
-                'files': t.files.map((FileTask f) => f.toJson()).toList(),
-              })
+          .map((DownloadTask t) => t.toJson())
           .toList();
       await prefs.setString(_kStorage, jsonEncode(list));
     } catch (_) {}
@@ -345,8 +513,10 @@ class DownloadManager extends ChangeNotifier {
     _bgStopIfNeeded();
     await _persist();
     notifyListeners();
-    // مثل Epic Games: فتح نافذة تثبيت أندرويد تلقائيًا بعد اكتمال التحميل
+    // مثل Epic Games: فتح نافذة تثبيت أندرويد تلقائيًا بعد اكتمال التحميل،
+    // ثم نقل OBB/Data تلقائيًا (إن كانت اللعبة مثبتة من تحديث سابق)
     await openInstaller(t.game.id);
+    unawaited(_postInstallFlow());
   }
 
   /// تنزيل ملف واحد كاملًا مع دعم الاستئناف (Range) وإعادة المحاولة التلقائية.

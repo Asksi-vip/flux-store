@@ -148,10 +148,14 @@ class DownloadButton extends StatelessWidget {
                       const Icon(Icons.check_circle_rounded,
                           color: EpicColors.success, size: 22),
                       const SizedBox(width: 10),
-                      const Expanded(
+                      Expanded(
                         child: Text(
-                          'تم تحميل اللعبة بنجاح',
-                          style: TextStyle(
+                          task.moving
+                              ? 'جارٍ نقل ملفات اللعبة إلى مكانها تلقائيًا…'
+                              : task.installed
+                                  ? 'اللعبة مثبتة على جهازك'
+                                  : 'تم تحميل اللعبة بنجاح',
+                          style: const TextStyle(
                             color: EpicColors.success,
                             fontSize: 14,
                             fontWeight: FontWeight.w800,
@@ -169,25 +173,47 @@ class DownloadButton extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 12),
-                EpicButton(
-                  label: 'تثبيت اللعبة',
-                  icon: Icons.install_mobile_rounded,
-                  onPressed: () async {
-                    final bool ok =
-                        await DownloadManager.instance.openInstaller(game.id);
-                    if (!ok && context.mounted) {
-                      ScaffoldMessenger.of(context)
-                        ..hideCurrentSnackBar()
-                        ..showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                              'ملف APK غير موجود على المسار — انقله يدويًا ثم أعد المحاولة',
+                if (task.installed)
+                  EpicButton(
+                    label: 'تشغيل اللعبة',
+                    icon: Icons.play_arrow_rounded,
+                    variant: EpicButtonVariant.success,
+                    onPressed: () async {
+                      final bool ok =
+                          await DownloadManager.instance.launchGame(task.package);
+                      if (!ok && context.mounted) {
+                        ScaffoldMessenger.of(context)
+                          ..hideCurrentSnackBar()
+                          ..showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'افتح اللعبة من أيقونتها في مشغّل النظام',
+                              ),
                             ),
-                          ),
-                        );
-                    }
-                  },
-                ),
+                          );
+                      }
+                    },
+                  )
+                else
+                  EpicButton(
+                    label: 'تثبيت اللعبة',
+                    icon: Icons.install_mobile_rounded,
+                    onPressed: () async {
+                      final bool ok =
+                          await DownloadManager.instance.openInstaller(game.id);
+                      if (!ok && context.mounted) {
+                        ScaffoldMessenger.of(context)
+                          ..hideCurrentSnackBar()
+                          ..showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'ملف APK غير موجود على المسار — أعد التحميل ثم حاول مجددًا',
+                              ),
+                            ),
+                          );
+                      }
+                    },
+                  ),
                 const SizedBox(height: 10),
                 ..._filesRows(context, task),
                 const SizedBox(height: 8),
@@ -325,7 +351,9 @@ class DownloadButton extends StatelessWidget {
             if (movedOutside) ...[
               const SizedBox(height: 4),
               Text(
-                'انقله بعد التثبيت إلى: $target',
+                task.installed
+                    ? 'نُقل تلقائيًا إلى: $target'
+                    : 'سينُقل تلقائيًا بعد التثبيت إلى: $target',
                 style: const TextStyle(
                   color: EpicColors.cyan,
                   fontSize: 10.5,

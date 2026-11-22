@@ -146,12 +146,16 @@ class _TaskCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final DownloadTaskState state = task.state;
-    final (String label, Color color) = switch (state) {
-      DownloadTaskState.downloading => ('جارٍ التحميل', EpicColors.blue),
-      DownloadTaskState.waitingNetwork => ('بانتظار الشبكة', Colors.orange),
-      DownloadTaskState.paused => ('متوقف مؤقتًا', EpicColors.textSecondary),
-      DownloadTaskState.completed => ('مكتمل', EpicColors.success),
-    };
+    final (String label, Color color) = state == DownloadTaskState.completed &&
+            task.installed
+        ? ('مثبتة', EpicColors.success)
+        : switch (state) {
+            DownloadTaskState.downloading => ('جارٍ التحميل', EpicColors.blue),
+            DownloadTaskState.waitingNetwork =>
+              ('بانتظار الشبكة', Colors.orange),
+            DownloadTaskState.paused => ('متوقف مؤقتًا', EpicColors.textSecondary),
+            DownloadTaskState.completed => ('مكتمل', EpicColors.success),
+          };
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -316,6 +320,43 @@ class _TaskCard extends StatelessWidget {
                 color: EpicColors.textSecondary,
                 fontSize: 11.5,
               ),
+            ),
+            if (task.moving) ...[
+              const SizedBox(height: 8),
+              Text(
+                'جارٍ نقل ملفات اللعبة إلى مكانها تلقائيًا…',
+                style: TextStyle(
+                  color: Colors.orange.shade200,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+            const SizedBox(height: 10),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                _pillButton(
+                  icon: task.installed
+                      ? Icons.play_arrow_rounded
+                      : Icons.install_mobile_rounded,
+                  label: task.installed ? 'تشغيل' : 'تثبيت',
+                  onTap: () async {
+                    if (task.installed) {
+                      await DownloadManager.instance.launchGame(task.package);
+                    } else {
+                      await DownloadManager.instance.openInstaller(task.game.id);
+                    }
+                  },
+                ),
+                const SizedBox(width: 10),
+                _pillButton(
+                  icon: Icons.delete_outline_rounded,
+                  label: 'حذف',
+                  danger: true,
+                  onTap: () => DownloadManager.instance.remove(task.game.id),
+                ),
+              ],
             ),
           ],
           const SizedBox(height: 6),

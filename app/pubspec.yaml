@@ -27,3 +27,7 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  # صور الشعار: أيقونة الرأس (شعار FLUX STORE)
+  assets:
+    - assets/brand/

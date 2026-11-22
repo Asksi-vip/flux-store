@@ -87,10 +87,16 @@ jobs:
                   "    </application>",
                   1,
               )
-          s = s.replace('android:label="flux_store"', 'android:label="Flux"')
+          s = s.replace('android:label="flux_store"', 'android:label="FLUX GAMES"')
           open(p, "w", encoding="utf-8").write(s)
           print(s)
           PY
+
+      # استبدال أيقونة Flutter الافتراضية بشعار FLUX GAMES (legacy + adaptive)
+      - name: استبدال أيقونة المشغّل بشعار FLUX GAMES
+        run: |
+          cp -r ci-assets/launcher/. app/android/app/src/main/res/
+          ls app/android/app/src/main/res/mipmap-xxxhdpi/
 
       # خدمة الخلفية (إشعار تقدم + WakeLock) + مثبّت الـ APK عبر FileProvider
       - name: حقن خدمة التحميل بالخلفية ومثبّت الـ APK (Kotlin)
@@ -226,7 +232,12 @@ jobs:
           main_activity = textwrap.dedent(r'''
               package com.fluxstore.flux_store
 
+              import android.app.Notification
+              import android.app.NotificationChannel
+              import android.app.NotificationManager
+              import android.content.Context
               import android.content.Intent
+              import android.os.Build
               import androidx.core.content.ContextCompat
               import androidx.core.content.FileProvider
               import io.flutter.embedding.android.FlutterActivity
@@ -234,7 +245,8 @@ jobs:
               import io.flutter.plugin.common.MethodChannel
               import java.io.File
 
-              /** MainActivity مع قناة flux.background: خدمة الخلفية + فتح مثبّت الـ APK بعد اكتمال التحميل. */
+              /** MainActivity مع قناة flux.background: خدمة الخلفية + تثبيت الـ APK
+               *  + كشف تثبيت اللعبة وتشغيلها + إشعار الجاهزية بعد نقل الملفات. */
               class MainActivity : FlutterActivity() {
 
                   override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -287,6 +299,60 @@ jobs:
                                           result.success(false)
                                       }
                                   }
+                                  "isPackageInstalled" -> {
+                                      val pkg = call.argument<String>("pkg") ?: ""
+                                      result.success(
+                                          try {
+                                              packageManager.getPackageInfo(pkg, 0)
+                                              true
+                                          } catch (e: Exception) {
+                                              false
+                                          }
+                                      )
+                                  }
+                                  "launchApp" -> {
+                                      val pkg = call.argument<String>("pkg") ?: ""
+                                      try {
+                                          val launch = packageManager.getLaunchIntentForPackage(pkg)
+                                          if (launch == null) {
+                                              result.success(false)
+                                          } else {
+                                              launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                              startActivity(launch)
+                                              result.success(true)
+                                          }
+                                      } catch (e: Exception) {
+                                          result.success(false)
+                                      }
+                                  }
+                                  "notifyReady" -> {
+                                      try {
+                                          val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                                          if (Build.VERSION.SDK_INT >= 26) {
+                                              nm.createNotificationChannel(
+                                                  NotificationChannel(
+                                                      DownloadService.CHANNEL_ID,
+                                                      "تحميلات الألعاب",
+                                                      NotificationManager.IMPORTANCE_DEFAULT
+                                                  )
+                                              )
+                                          }
+                                          val b = if (Build.VERSION.SDK_INT >= 26) {
+                                              Notification.Builder(this, DownloadService.CHANNEL_ID)
+                                          } else {
+                                              @Suppress("DEPRECATION")
+                                              Notification.Builder(this)
+                                          }
+                                          b.setSmallIcon(android.R.drawable.stat_sys_download_done)
+                                              .setContentTitle(call.argument<String>("title") ?: "اللعبة جاهزة")
+                                              .setContentText("اكتمل التثبيت ونقل الملفات — استمتع باللعب")
+                                              .setAutoCancel(true)
+                                          nm.notify(43, b.build())
+                                          result.success(null)
+                                      } catch (e: Exception) {
+                                          result.success(null)
+                                      }
+                                  }
                                   else -> result.notImplemented()
                               }
                           }
@@ -321,6 +387,48 @@ jobs:
       - name: تثبيت الاعتماديات
         working-directory: app
         run: flutter pub get
+
+      # توقيع ثابت: مفتاح واحد لكل الإصدارات حتى تُثبَّت التحديثات فوق بعضها بدون حذف
+      - name: إعداد التوقيع الثابت
+        working-directory: app
+        env:
+          FLUX_KEYSTORE_B64: ${{ secrets.FLUX_KEYSTORE_B64 }}
+          FLUX_STORE_PASS: ${{ secrets.FLUX_STORE_PASS }}
+          FLUX_KEY_PASS: ${{ secrets.FLUX_KEY_PASS }}
+          FLUX_KEY_ALIAS: ${{ secrets.FLUX_KEY_ALIAS }}
+        run: |
+          echo "$FLUX_KEYSTORE_B64" | base64 -d > android/key.jks
+          printf 'storePassword=%s\nkeyPassword=%s\nkeyAlias=%s\nstoreFile=key.jks\n' \
+            "$FLUX_STORE_PASS" "$FLUX_KEY_PASS" "$FLUX_KEY_ALIAS" > android/key.properties
+          python3 - <<'PY'
+          p = "android/app/build.gradle"
+          s = open(p, encoding="utf-8").read()
+          if "signingConfigs.release" not in s:
+              # استبدال توقيع debug في بناء الإطلاق بتوقيع الإصدار الثابت
+              for old in ("signingConfig = signingConfigs.debug",
+                          "signingConfig signingConfigs.debug"):
+                  s = s.replace(old, "signingConfig = signingConfigs.release")
+              block = (
+                  "    signingConfigs {\n"
+                  "        release {\n"
+                  '            def ksProps = new Properties()\n'
+                  '            def ksFile = rootProject.file("key.properties")\n'
+                  "            if (ksFile.exists()) ksProps.load(new FileInputStream(ksFile))\n"
+                  '            storeFile ksProps["storeFile"] ? rootProject.file(ksProps["storeFile"]) : null\n'
+                  '            storePassword ksProps["storePassword"]\n'
+                  '            keyAlias ksProps["keyAlias"]\n'
+                  '            keyPassword ksProps["keyPassword"]\n'
+                  "        }\n"
+                  "    }\n"
+                  "\n"
+                  "    buildTypes {"
+              )
+              s = s.replace("    buildTypes {", block, 1)
+          open(p, "w", encoding="utf-8").write(s)
+          i = s.find("signingConfigs")
+          print("signingConfig release wired ✓ — snippet:")
+          print(s[i:i + 420])
+          PY
 
       - name: بناء نسخة الإطلاق
         working-directory: app

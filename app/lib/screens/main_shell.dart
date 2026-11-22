@@ -34,8 +34,6 @@ class _MainShellState extends State<MainShell> {
 
   static const List<String> _labels = ['المتجر', 'التنزيلات'];
 
-  static const List<String> _titles = ['متجر FLUX', 'التنزيلات'];
-
   void _setTab(int i) => setState(() => _index = i);
 
   /// فتح صفحة تفاصيل لعبة من أي قسم.
@@ -68,32 +66,46 @@ class _MainShellState extends State<MainShell> {
         titleSpacing: 16,
         title: Row(
           children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: EpicColors.elevated,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: EpicColors.border),
+            // شعار FLUX (الصورة المرفوعة) بدل النص القديم
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.asset(
+                'assets/brand/flux_badge.png',
+                height: 34,
+                fit: BoxFit.contain,
               ),
-              child: const Text(
-                'FLUX',
-                style: TextStyle(
-                  color: EpicColors.textPrimary,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 3,
+            ),
+            const SizedBox(width: 10),
+            // كلمة STORE بخط غامق بجانب الشعار
+            const Text(
+              'STORE',
+              style: TextStyle(
+                color: EpicColors.textPrimary,
+                fontSize: 17,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 2.5,
+              ),
+            ),
+            if (_index == 1) ...[
+              const SizedBox(width: 10),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: EpicColors.elevated,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: EpicColors.border),
+                ),
+                child: const Text(
+                  'التنزيلات',
+                  style: TextStyle(
+                    color: EpicColors.textSecondary,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 12),
-            Text(
-              _titles[_index],
-              style: const TextStyle(
-                color: EpicColors.textSecondary,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
+            ],
           ],
         ),
         actions: [

@@ -51,9 +51,13 @@ class GamePricePill extends StatelessWidget {
   final bool compact;
 
   Future<void> _handleTap(BuildContext context) async {
-    // لعبة مكتملة التحميل → نافذة تثبيت أندرويد مباشرة مثل Epic
+    // لعبة مكتملة التحميل → نافذة تثبيت أندرويد مثل Epic، وبعد التثبيت → تشغيل مباشر
     final DownloadTask? task = DownloadManager.instance.taskFor(game.id);
     if (task != null && task.state == DownloadTaskState.completed) {
+      if (task.installed) {
+        await DownloadManager.instance.launchGame(task.package);
+        return;
+      }
       final bool ok = await DownloadManager.instance.openInstaller(game.id);
       if (!ok && context.mounted) {
         ScaffoldMessenger.of(context)
@@ -61,7 +65,7 @@ class GamePricePill extends StatelessWidget {
           ..showSnackBar(
             const SnackBar(
               content: Text(
-                'ملف APK غير موجود على المسار — افتح تبويب التنزيلات وانقله يدويًا',
+                'ملف APK غير موجود على المسار — أعد التحميل من التفاصيل',
               ),
             ),
           );
@@ -83,18 +87,21 @@ class GamePricePill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final DownloadTask? taskNow = DownloadManager.instance.taskFor(game.id);
     final Widget child = game.isFree
         ? Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(
-                Icons.download_rounded,
+                taskNow?.installed == true
+                    ? Icons.play_arrow_rounded
+                    : Icons.download_rounded,
                 color: EpicColors.cyan,
                 size: fontSize + 4,
               ),
               const SizedBox(width: 5),
               Text(
-                'تثبيت',
+                taskNow?.installed == true ? 'تشغيل' : 'تثبيت',
                 style: TextStyle(
                   color: EpicColors.cyan,
                   fontSize: fontSize,
