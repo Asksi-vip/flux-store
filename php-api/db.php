@@ -151,6 +151,84 @@ function flux_install_path($type, $pkg, $versionCode, $url)
     return '';
 }
 
+/**
+ * اشتقاق اسم حزمة أندرويد تلقائيًا من روابط التحميل (لا حاجة لإدخاله يدويًا):
+ * يبحث عن نمط com.company.game داخل الروابط ويعيد أول تطابق.
+ */
+function flux_package_from_url(array $urls)
+{
+    foreach ($urls as $url) {
+        if (!is_string($url) || $url === '') {
+            continue;
+        }
+        if (preg_match('/com\.[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+/', $url, $m)) {
+            return $m[0];
+        }
+    }
+    return '';
+}
+
+/** تحويل قيمة ميغابايت (نص) إلى بايتات — صفر عند الفارغة أو غير الصالحة. */
+function flux_mb_to_bytes($mb)
+{
+    $v = (float) (($mb === '' || $mb === null) ? 0 : $mb);
+    if ($v <= 0) {
+        return 0;
+    }
+    return (int) round($v * 1024 * 1024);
+}
+
+/**
+ * جمع ملفات التحميل من نموذج اللعبة مباشرة:
+ * APK أساسي + OBB + صفوف Data متعددة (data_url[] / data_size_mb[]) → مصفوفة جاهزة للإدراج.
+ */
+function flux_collect_files_input($post)
+{
+    $files = array();
+
+    $apkUrl = trim((string) (isset($post['apk_url']) ? $post['apk_url'] : ''));
+    if ($apkUrl !== '') {
+        $files[] = array(
+            'name'         => 'ملف تثبيت اللعبة APK',
+            'url'          => $apkUrl,
+            'type'         => 'apk',
+            'size'         => flux_mb_to_bytes(isset($post['apk_size_mb']) ? $post['apk_size_mb'] : ''),
+            'version_code' => 0,
+        );
+    }
+
+    $obbUrl = trim((string) (isset($post['obb_url']) ? $post['obb_url'] : ''));
+    if ($obbUrl !== '') {
+        $files[] = array(
+            'name'         => 'ملف البيانات الرئيسي OBB',
+            'url'          => $obbUrl,
+            'type'         => 'obb',
+            'size'         => flux_mb_to_bytes(isset($post['obb_size_mb']) ? $post['obb_size_mb'] : ''),
+            'version_code' => (int) (isset($post['obb_version_code']) && $post['obb_version_code'] !== '' ? $post['obb_version_code'] : 0),
+        );
+    }
+
+    $dataUrls  = (isset($post['data_url']) && is_array($post['data_url'])) ? $post['data_url'] : array();
+    $dataSizes = (isset($post['data_size_mb']) && is_array($post['data_size_mb'])) ? $post['data_size_mb'] : array();
+    $n = 0;
+    foreach ($dataUrls as $i => $u) {
+        $u = trim((string) $u);
+        if ($u === '') {
+            continue;
+        }
+        $n++;
+        $files[] = array(
+            'name'         => 'ملفات إضافية Data ' . $n,
+            'url'          => $u,
+            'type'         => 'data',
+            'size'         => flux_mb_to_bytes(isset($dataSizes[$i]) ? $dataSizes[$i] : ''),
+            'version_code' => 0,
+        );
+    }
+
+    return $files;
+}
+
 /** جلب ملفات التحميل لمجموعة ألعاب دفعة واحدة → [game_id ← قائمة الملفات]. */
 function flux_files_for_games(PDO $pdo, array $ids)
 {

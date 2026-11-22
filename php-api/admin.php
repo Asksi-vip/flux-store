@@ -53,6 +53,8 @@ if ($logged && $pdo !== null && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($
         if ($fields === null) {
             $error = 'اسم اللعبة مطلوب';
         } else {
+            $gid = 0;
+            $msg = '';
             if ($id > 0) {
                 $stmt = $pdo->prepare(
                     'UPDATE games SET name = :name, description = :description, price = :price,
@@ -65,6 +67,7 @@ if ($logged && $pdo !== null && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($
                 $params = flux_prefix_params($fields);
                 $params[':id'] = $id;
                 $stmt->execute($params);
+                $gid = $id;
                 $msg = 'تم تحديث اللعبة بنجاح';
             } else {
                 try {
@@ -77,9 +80,48 @@ if ($logged && $pdo !== null && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($
                          :package_name, :download_version, :download_version_code)'
                     );
                     $stmt->execute(flux_prefix_params($fields));
+                    $gid = (int) $pdo->lastInsertId();
                     $msg = 'تمت إضافة اللعبة بنجاح';
                 } catch (Throwable $e) {
                     $error = 'تعذرت الإضافة — تأكد أن اسم اللعبة غير مكرر';
+                }
+            }
+
+            // ملفات التحميل من النموذج (APK + OBB + صفوف Data) — الحزمة تشتق تلقائيًا من الروابط
+            if ($gid > 0) {
+                $files = flux_collect_files_input($_POST);
+                $urlsForPkg = array();
+                foreach ($files as $f) {
+                    $urlsForPkg[] = $f['url'];
+                }
+                $pkg = flux_package_from_url($urlsForPkg);
+                if ($pkg === '') {
+                    // توافق مع النماذج القديمة أو الرابط الواضح داخل صفحة الملفات
+                    $pkg = trim((string) (isset($_POST['package_name']) ? $_POST['package_name'] : ''));
+                }
+                if ($pkg !== '') {
+                    $pdo->prepare('UPDATE games SET package_name = :p WHERE id = :id')
+                        ->execute(array(':p' => $pkg, ':id' => $gid));
+                }
+                if (!empty($files)) {
+                    // النموذج هو مصدر الحقيقة: يعيد بناء قائمة الملفات كاملة
+                    $pdo->prepare('DELETE FROM game_files WHERE game_id = :id')
+                        ->execute(array(':id' => $gid));
+                    $ins = $pdo->prepare(
+                        'INSERT INTO game_files (game_id, name, url, type, size, version_code)
+                         VALUES (:gid, :name, :url, :type, :size, :vc)'
+                    );
+                    foreach ($files as $f) {
+                        $ins->execute(array(
+                            ':gid'  => $gid,
+                            ':name' => $f['name'],
+                            ':url'  => $f['url'],
+                            ':type' => $f['type'],
+                            ':size' => $f['size'],
+                            ':vc'   => $f['version_code'],
+                        ));
+                    }
+                    $msg .= ' — وتم حفظ ' . count($files) . ' ملف تحميل';
                 }
             }
             header('Location: admin.php?msg=' . urlencode($msg));
@@ -158,6 +200,30 @@ if ($logged && $pdo !== null && isset($_GET['edit'])) {
         $stmt = $pdo->prepare('SELECT * FROM games WHERE id = :id');
         $stmt->execute(array(':id' => $editId));
         $editGame = $stmt->fetch() ?: null;
+    }
+}
+
+// تعبئة حقول روابط التحميل في النموذج من ملفات اللعبة المحفوظة (APK/OBB/Data)
+$apkPre  = array('url' => '', 'size' => '');
+$obbPre  = array('url' => '', 'size' => '', 'vc' => '0');
+$dataPre = array();
+if ($logged && $pdo !== null && $editGame) {
+    $stmt = $pdo->prepare('SELECT * FROM game_files WHERE game_id = :gid ORDER BY id ASC');
+    $stmt->execute(array(':gid' => (int) $editGame['id']));
+    foreach ($stmt->fetchAll() as $pf) {
+        if ($pf['type'] === 'apk' && $apkPre['url'] === '') {
+            $apkPre['url']  = $pf['url'];
+            $apkPre['size'] = (int) $pf['size'] > 0 ? number_format($pf['size'] / 1048576, 2, '.', '') : '';
+        } elseif ($pf['type'] === 'obb' && $obbPre['url'] === '') {
+            $obbPre['url']  = $pf['url'];
+            $obbPre['size'] = (int) $pf['size'] > 0 ? number_format($pf['size'] / 1048576, 2, '.', '') : '';
+            $obbPre['vc']   = (string) (int) $pf['version_code'];
+        } elseif ($pf['type'] === 'data') {
+            $dataPre[] = array(
+                'url'  => $pf['url'],
+                'size' => (int) $pf['size'] > 0 ? number_format($pf['size'] / 1048576, 2, '.', '') : '',
+            );
+        }
     }
 }
 
@@ -323,10 +389,6 @@ function e($v)
 
                     <div class="row">
                         <div>
-                            <label>حزمة أندرويد (لمسارات OBB/Data — مثل com.company.game)</label>
-                            <input type="text" name="package_name" value="<?php echo $editGame ? e($editGame['package_name']) : ''; ?>">
-                        </div>
-                        <div>
                             <label>إصدار التحميل (نص مثل 2.4.1)</label>
                             <input type="text" name="download_version" value="<?php echo $editGame ? e($editGame['download_version']) : ''; ?>">
                         </div>
@@ -336,6 +398,36 @@ function e($v)
                         </div>
                     </div>
 
+                    <!-- روابط التحميل: APK + OBB + صفوف Data قابلة للتكرار — الحزمة تشتق تلقائيًا -->
+                    <h3 style="font-size:13px; margin:18px 0 8px; color:#26bbff;">⬇ روابط التحميل (للألعاب المجانية)</h3>
+                    <p class="sub" style="margin:0 0 10px;">حزمة أندرويد (لمسارات OBB/Data) تشتق تلقائيًا من الرابط — لا تحتاج إدخالها. حفظ النموذج مع أي رابط يعيد بناء قائمة الملفات كاملة.</p>
+                    <div class="row">
+                        <div>
+                            <label>رابط ملف APK الأساسي</label>
+                            <input type="url" name="apk_url" value="<?php echo $apkPre['url']; ?>" placeholder="https://site.com/com.example.game/files/game.apk">
+                        </div>
+                        <div style="flex:0 0 150px;">
+                            <label>حجمه (ميغابايت)</label>
+                            <input type="number" step="0.01" min="0" name="apk_size_mb" value="<?php echo $apkPre['size']; ?>">
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div>
+                            <label>رابط ملف OBB (إن وجد)</label>
+                            <input type="url" name="obb_url" value="<?php echo $obbPre['url']; ?>" placeholder="https://site.com/main.120.com.example.game.obb">
+                        </div>
+                        <div style="flex:0 0 150px;">
+                            <label>حجمه (ميغابايت)</label>
+                            <input type="number" step="0.01" min="0" name="obb_size_mb" value="<?php echo $obbPre['size']; ?>">
+                        </div>
+                        <div style="flex:0 0 150px;">
+                            <label>رقم إصدار OBB</label>
+                            <input type="number" min="0" name="obb_version_code" value="<?php echo $obbPre['vc']; ?>">
+                        </div>
+                    </div>
+                    <div id="data-rows"></div>
+                    <button class="btn btn-ghost" type="button" onclick="addDataRow('', '')" style="text-decoration:none; margin-top:10px;">+ إضافة ملف Data (يمكن تكرارها للعدة)</button>
+
                     <div class="check">
                         <input type="checkbox" name="is_featured" value="1" id="feat" <?php echo ($editGame && (int) $editGame['is_featured'] === 1) ? 'checked' : ''; ?>>
                         <label for="feat" style="margin:0;">لعبة مميزة (تظهر في البانر السينمائي)</label>
@@ -344,6 +436,25 @@ function e($v)
                     <button class="btn" type="submit"><?php echo $editGame ? 'حفظ التعديلات' : 'إضافة اللعبة'; ?></button>
                     <?php if ($editGame) { ?><a class="btn btn-ghost" href="admin.php" style="text-decoration:none;">إلغاء التعديل</a><?php } ?>
                 </form>
+
+                <script>
+                // صفوف Data المتكررة: رابط + حجم لكل صف، مع زر حذف
+                function addDataRow(url, size) {
+                    var wrap = document.getElementById('data-rows');
+                    if (!wrap) return;
+                    var div = document.createElement('div');
+                    div.className = 'row';
+                    div.style.marginTop = '8px';
+                    div.innerHTML =
+                        '<div><label>رابط ملف Data إضافي</label><input type="url" name="data_url[]" value="' + url + '" placeholder="https://site.com/patch.zip"></div>' +
+                        '<div style="flex:0 0 150px;"><label>حجمه (ميغابايت)</label><input type="number" step="0.01" min="0" name="data_size_mb[]" value="' + size + '"></div>' +
+                        '<div style="flex:0 0 52px; align-self:flex-end; padding-bottom:6px;"><button type="button" class="btn-danger" onclick="this.closest(\'.row\').remove()">حذف</button></div>';
+                    wrap.appendChild(div);
+                }
+                <?php foreach ($dataPre as $dp) { ?>
+                addDataRow(<?php echo json_encode($dp['url']); ?>, <?php echo json_encode($dp['size']); ?>);
+                <?php } ?>
+                </script>
             </div>
             <?php } ?>
 

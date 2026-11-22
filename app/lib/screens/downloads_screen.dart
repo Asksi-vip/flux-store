@@ -1,14 +1,30 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../controllers/library_controller.dart';
 import '../models/game.dart';
 import '../services/download_manager.dart';
 import '../theme/app_theme.dart';
+import '../widgets/page_fade_transition.dart';
+import 'library_screen.dart';
 
 /// شاشة التنزيلات — إدارة كل تحميلات الألعاب داخل التطبيق مثل Epic Games:
 /// تقدم حقيقي، سرعة، إيقاف/استكمال، وعودة تلقائية بعد انقطاع الشبكة.
 class DownloadsScreen extends StatelessWidget {
-  const DownloadsScreen({super.key});
+  const DownloadsScreen({super.key, required this.controller});
+
+  final LibraryController controller;
+
+  void _openLibrary(BuildContext context) {
+    Navigator.of(context).push(
+      epicRoute(
+        LibraryScreen(
+          controller: controller,
+          onBrowse: () => Navigator.of(context).pop(),
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -48,7 +64,7 @@ class DownloadsScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 8),
                   const Text(
-                    'الألعاب المجانية تُحمّل مباشرة من صفحتها مثل Epic Games —\nواستكمالها تلقائيًا حتى بعد انقطاع النت أو إغلاق التطبيق',
+                    'الألعاب المجانية تُثبّت مباشرة من صفحتها مثل Epic Games —\nواستكمالها تلقائيًا حتى بعد انقطاع النت أو إغلاق التطبيق',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: EpicColors.textSecondary,
@@ -56,20 +72,65 @@ class DownloadsScreen extends StatelessWidget {
                       height: 1.7,
                     ),
                   ),
+                  const SizedBox(height: 16),
+                  TextButton.icon(
+                    onPressed: () => _openLibrary(context),
+                    icon: const Icon(
+                      Icons.video_library_rounded,
+                      size: 18,
+                      color: EpicColors.cyan,
+                    ),
+                    label: const Text(
+                      'عرض مكتبتي',
+                      style: TextStyle(
+                        color: EpicColors.cyan,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
           );
         }
-        return ListView.builder(
-          padding: const EdgeInsets.all(16),
-          itemCount: tasks.length,
-          itemBuilder: (context, int i) {
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: _TaskCard(task: tasks[i]),
-            );
-          },
+        return Column(
+          children: [
+            Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+                child: TextButton.icon(
+                  onPressed: () => _openLibrary(context),
+                  icon: const Icon(
+                    Icons.video_library_rounded,
+                    size: 16,
+                    color: EpicColors.cyan,
+                  ),
+                  label: const Text(
+                    'عرض مكتبتي',
+                    style: TextStyle(
+                      color: EpicColors.cyan,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Expanded(
+              child: ListView.builder(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                itemCount: tasks.length,
+                itemBuilder: (context, int i) {
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: _TaskCard(task: tasks[i]),
+                  );
+                },
+              ),
+            ),
+          ],
         );
       },
     );

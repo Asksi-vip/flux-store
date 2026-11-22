@@ -19,7 +19,7 @@ class HeroCarousel extends StatefulWidget {
 }
 
 class _HeroCarouselState extends State<HeroCarousel> {
-  final PageController _pageController = PageController();
+  final PageController _pageController = PageController(viewportFraction: 0.93);
   Timer? _timer;
   int _index = 0;
 
@@ -57,7 +57,7 @@ class _HeroCarouselState extends State<HeroCarousel> {
     return Column(
       children: [
         SizedBox(
-          height: 230,
+          height: 240,
           child: PageView.builder(
             controller: _pageController,
             itemCount: widget.games.length,
@@ -70,7 +70,7 @@ class _HeroCarouselState extends State<HeroCarousel> {
         ),
         const SizedBox(height: 10),
         SizedBox(
-          height: 64,
+          height: 68,
           child: ListView.separated(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             scrollDirection: Axis.horizontal,
@@ -90,9 +90,9 @@ class _HeroCarouselState extends State<HeroCarousel> {
                   duration: const Duration(milliseconds: 250),
                   width: 104,
                   decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(4),
+                    borderRadius: BorderRadius.circular(12),
                     border: Border.all(
-                      color: selected ? EpicColors.blue : Colors.transparent,
+                      color: selected ? EpicColors.blue : EpicColors.border,
                       width: 2,
                     ),
                   ),
@@ -100,7 +100,7 @@ class _HeroCarouselState extends State<HeroCarousel> {
                     duration: const Duration(milliseconds: 250),
                     opacity: selected ? 1 : 0.45,
                     child: ClipRRect(
-                      borderRadius: BorderRadius.circular(2),
+                      borderRadius: BorderRadius.circular(10),
                       child: buildGameCover(widget.games[i]),
                     ),
                   ),
@@ -113,71 +113,84 @@ class _HeroCarouselState extends State<HeroCarousel> {
     );
   }
 
-  /// شريحة البانر الكاملة: صورة عريضة + تدرج سفلي + اسم وسعر اللعبة.
+  /// شريحة البانر الكاملة: بطاقة بحواف دائرية وإطار + تدرج سفلي + اسم وحبة سعر/تثبيت.
   Widget _slide(Game game) {
     final String url = game.banner.isNotEmpty ? game.banner : game.image;
-    return GestureDetector(
-      onTap: () => widget.onOpenGame(game),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          if (url.isEmpty)
-            Container(
-              color: EpicColors.surface,
-              alignment: Alignment.center,
-              child: const Icon(
-                Icons.sports_esports,
-                color: EpicColors.border,
-                size: 44,
-              ),
-            )
-          else
-            FadeInNetworkImage(url: url, fit: BoxFit.cover),
-          Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                stops: const [0.35, 1],
-                colors: [Colors.transparent, Colors.black.withOpacity(.85)],
-              ),
-            ),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      child: GestureDetector(
+        onTap: () => widget.onOpenGame(game),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: EpicColors.border),
+            color: EpicColors.surface,
           ),
-          PositionedDirectional(
-            bottom: 16,
-            start: 16,
-            end: 16,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  game.categoryDisplay,
-                  style: const TextStyle(
-                    color: EpicColors.cyan,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w800,
+          clipBehavior: Clip.antiAlias,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (url.isEmpty)
+                Container(
+                  color: EpicColors.surface,
+                  alignment: Alignment.center,
+                  child: const Icon(
+                    Icons.sports_esports,
+                    color: EpicColors.border,
+                    size: 44,
+                  ),
+                )
+              else
+                FadeInNetworkImage(url: url, fit: BoxFit.cover),
+              Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    stops: const [0.35, 1],
+                    colors: [Colors.transparent, Colors.black.withOpacity(.85)],
                   ),
                 ),
-                const SizedBox(height: 6),
-                Text(
-                  game.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: EpicColors.textPrimary,
-                    fontSize: 22,
-                    fontWeight: FontWeight.w800,
-                  ),
+              ),
+              PositionedDirectional(
+                bottom: 16,
+                start: 16,
+                end: 16,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      game.categoryDisplay,
+                      style: const TextStyle(
+                        color: EpicColors.cyan,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      game.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: EpicColors.textPrimary,
+                        fontSize: 22,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    GamePricePill(
+                      game: game,
+                      onOpenGame: () => widget.onOpenGame(game),
+                      fontSize: 13.5,
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [PriceTag(game: game, fontSize: 14)],
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }

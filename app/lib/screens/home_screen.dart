@@ -225,7 +225,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         SizedBox(
-          height: 168,
+          height: 170,
           child: ListView.separated(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             scrollDirection: Axis.horizontal,
@@ -237,59 +237,68 @@ class _HomeScreenState extends State<HomeScreen> {
                 delay: Duration(milliseconds: 60 * (i % 6)),
                 child: GestureDetector(
                   onTap: () => widget.onOpenGame(g),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: Container(
-                      width: 260,
+                  child: Container(
+                    width: 270,
+                    decoration: BoxDecoration(
                       color: EpicColors.surface,
-                      child: Row(
-                        children: [
-                          SizedBox(
-                            width: 110,
-                            height: 168,
-                            child: Stack(
-                              fit: StackFit.expand,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: EpicColors.border),
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    child: Row(
+                      children: [
+                        SizedBox(
+                          width: 112,
+                          height: 170,
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              buildGameCover(g),
+                              Positioned(
+                                top: 8,
+                                start: 8,
+                                child: DiscountBadge(
+                                  percent: g.discountPercent,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                buildGameCover(g),
-                                Positioned(
-                                  top: 8,
-                                  left: 8,
-                                  child: DiscountBadge(
-                                    percent: g.discountPercent,
+                                Text(
+                                  g.name,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: EpicColors.textPrimary,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w800,
+                                    height: 1.3,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  g.categoryDisplay,
+                                  style: const TextStyle(
+                                    color: EpicColors.textSecondary,
                                     fontSize: 11,
                                   ),
                                 ),
-                              ],
-                            ),
-                          ),
-                          Expanded(
-                            child: Padding(
-                              padding: const EdgeInsets.all(12),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    g.name,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      color: EpicColors.textPrimary,
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w800,
-                                      height: 1.3,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    g.categoryDisplay,
-                                    style: const TextStyle(
-                                      color: EpicColors.textSecondary,
-                                      fontSize: 11,
-                                    ),
-                                  ),
-                                  const Spacer(),
-                                  PriceTag(game: g, fontSize: 13),
-                                  const SizedBox(height: 4),
+                                const Spacer(),
+                                GamePricePill(
+                                  game: g,
+                                  onOpenGame: () => widget.onOpenGame(g),
+                                  fontSize: 12.5,
+                                  compact: true,
+                                ),
+                                if (g.hasDiscount) ...[
+                                  const SizedBox(height: 6),
                                   Text(
                                     'وفّر \$${(g.price - g.finalPrice).toStringAsFixed(2)}',
                                     style: const TextStyle(
@@ -299,11 +308,11 @@ class _HomeScreenState extends State<HomeScreen> {
                                     ),
                                   ),
                                 ],
-                              ),
+                              ],
                             ),
                           ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
                   ),
                 ),

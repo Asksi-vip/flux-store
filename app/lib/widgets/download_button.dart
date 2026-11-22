@@ -24,7 +24,7 @@ class DownloadButton extends StatelessWidget {
         final DownloadTask? task = DownloadManager.instance.taskFor(game.id);
         if (task == null) {
           return EpicButton(
-            label: 'تحميل مجاني',
+            label: 'تثبيت مباشر',
             icon: Icons.download_rounded,
             onPressed: () {
               DownloadManager.instance.start(game);

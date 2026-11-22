@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -125,6 +126,10 @@ class DownloadManager extends ChangeNotifier {
   static const String _kStorage = 'flux_downloads_v1';
   static const Duration _retryDelay = Duration(seconds: 4);
 
+  /// قناة خدمة الخلفية (Foreground Service على أندرويد) — تُبقي التحميل
+  /// شغالًا حتى لو خرجت من التطبيق أو أطفأت الشاشة، مع إشعار تقدم.
+  static const MethodChannel _bgChannel = MethodChannel('flux.background');
+
   late final Dio _dio;
   final Map<int, DownloadTask> _tasks = {};
   final Map<int, CancelToken> _tokens = {};
@@ -179,6 +184,7 @@ class DownloadManager extends ChangeNotifier {
     for (final FileTask f in t.files) {
       if (f.state == FileTaskState.downloading) f.state = FileTaskState.pending;
     }
+    _bgStopIfNeeded();
     _persist();
     notifyListeners();
   }
@@ -202,8 +208,35 @@ class DownloadManager extends ChangeNotifier {
       }
     }
     _tasks.remove(gameId);
+    _bgStopIfNeeded();
     _persist();
     notifyListeners();
+  }
+
+  // ---------- خدمة الخلفية: إشعار تقدم + إبقاء العمل مستمرًا ----------
+
+  void _bgStart(DownloadTask t) {
+    try {
+      _bgChannel.invokeMethod('start', {'title': 'تحميل ${t.game.name}'});
+    } catch (_) {}
+  }
+
+  void _bgUpdate(DownloadTask t) {
+    try {
+      _bgChannel.invokeMethod('update', {
+        'title': 'تحميل ${t.game.name}',
+        'progress':
+            '${(t.progress * 100).toStringAsFixed(0)}% — ${formatBytes(t.speed)}/ث',
+      });
+    } catch (_) {}
+  }
+
+  void _bgStopIfNeeded() {
+    if (!hasActive) {
+      try {
+        _bgChannel.invokeMethod('stop');
+      } catch (_) {}
+    }
   }
 
   // ---------- الاستعادة من التخزين المحلي ----------
@@ -271,6 +304,8 @@ class DownloadManager extends ChangeNotifier {
     if (t == null) return;
     if (t.state == DownloadTaskState.downloading) return;
     t.state = DownloadTaskState.downloading;
+    // تشغيل خدمة الخلفية: التحميل يكمل حتى بعد الخروج من التطبيق أو إطفاء الشاشة
+    _bgStart(t);
     notifyListeners();
 
     for (final FileTask ft in t.files) {
@@ -281,6 +316,7 @@ class DownloadManager extends ChangeNotifier {
 
     t.state = DownloadTaskState.completed;
     t.speed = 0;
+    _bgStopIfNeeded();
     await _persist();
     notifyListeners();
   }
@@ -408,12 +444,16 @@ class DownloadManager extends ChangeNotifier {
     }
   }
 
-  /// تهدئة إشعارات الواجهة (200ms) وحفظ الحالة دوريًا (كل 3 ثوانٍ).
+  /// تهدئة إشعارات الواجهة (200ms) وحفظ الحالة دوريًا (كل 3 ثوانٍ) وتحديث إشعار الخلفية.
   void _throttledNotify(int gameId) {
     final DateTime now = DateTime.now();
     final DateTime? last = _lastNotify[gameId];
     if (last == null || now.difference(last).inMilliseconds >= 200) {
       _lastNotify[gameId] = now;
+      final DownloadTask? t = _tasks[gameId];
+      if (t != null && t.state == DownloadTaskState.downloading) {
+        _bgUpdate(t);
+      }
       notifyListeners();
     }
     final DateTime? lp = _lastPersist[gameId];
@@ -524,15 +564,18 @@ class DownloadManager extends ChangeNotifier {
     }
   }
 
-  /// طلب صلاحيات التخزين قبل أول تحميل.
+  /// طلب صلاحيات التخزين والإشعارات قبل أول تحميل.
   Future<void> _ensurePermissions() async {
     if (!Platform.isAndroid) return;
     try {
       // أندرويد 11+: صلاحية كل الملفات (تفتح إعدادات النظام للموافقة)
       final PermissionStatus manage = await Permission.manageExternalStorage.request();
-      if (manage.isGranted) return;
-      // أندرويد 10 وما قبل: صلاحية التخزين العادية
-      await Permission.storage.request();
+      if (!manage.isGranted) {
+        // أندرويد 10 وما قبل: صلاحية التخزين العادية
+        await Permission.storage.request();
+      }
+      // أندرويد 13+: إذن إشعارات شريط التقدم بالخلفية
+      await Permission.notification.request();
     } catch (_) {}
   }
 

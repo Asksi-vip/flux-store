@@ -26,29 +26,16 @@ class MainShell extends StatefulWidget {
 class _MainShellState extends State<MainShell> {
   int _index = 0;
 
+  // تبويبان فقط مثل طلب المستخدم: المتجر + التنزيلات
+  // (البحث والحساب عبر أزرار الترويسة، والمكتبة عبر رابط داخل التنزيلات)
   static const List<IconData> _icons = [
     Icons.storefront_rounded,
-    Icons.search_rounded,
-    Icons.video_library_rounded,
     Icons.download_rounded,
-    Icons.person_rounded,
   ];
 
-  static const List<String> _labels = [
-    'المتجر',
-    'البحث',
-    'المكتبة',
-    'التنزيلات',
-    'حسابي',
-  ];
+  static const List<String> _labels = ['المتجر', 'التنزيلات'];
 
-  static const List<String> _titles = [
-    'متجر FLUX',
-    'تصفح الألعاب',
-    'مكتبتي',
-    'التنزيلات',
-    'حسابي',
-  ];
+  static const List<String> _titles = ['متجر FLUX', 'التنزيلات'];
 
   void _setTab(int i) => setState(() => _index = i);
 
@@ -56,6 +43,20 @@ class _MainShellState extends State<MainShell> {
   void _openGame(Game game) {
     Navigator.of(context).push(
       epicRoute(GameDetailsScreen(game: game, controller: widget.controller)),
+    );
+  }
+
+  void _openSearch() {
+    Navigator.of(context).push(
+      epicRoute(
+        SearchScreen(initialCategory: null, onOpenGame: _openGame),
+      ),
+    );
+  }
+
+  void _openProfile() {
+    Navigator.of(context).push(
+      epicRoute(ProfileScreen(controller: widget.controller)),
     );
   }
 
@@ -72,7 +73,7 @@ class _MainShellState extends State<MainShell> {
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               decoration: BoxDecoration(
                 color: EpicColors.elevated,
-                borderRadius: BorderRadius.circular(4),
+                borderRadius: BorderRadius.circular(10),
                 border: Border.all(color: EpicColors.border),
               ),
               child: const Text(
@@ -98,9 +99,14 @@ class _MainShellState extends State<MainShell> {
         ),
         actions: [
           IconButton(
-            onPressed: () => _setTab(1),
+            onPressed: _openSearch,
             icon: const Icon(Icons.search_rounded, size: 22),
             tooltip: 'البحث',
+          ),
+          IconButton(
+            onPressed: _openProfile,
+            icon: const Icon(Icons.person_rounded, size: 22),
+            tooltip: 'حسابي',
           ),
         ],
       ),
@@ -108,16 +114,7 @@ class _MainShellState extends State<MainShell> {
         index: _index,
         children: [
           HomeScreen(controller: widget.controller, onOpenGame: _openGame),
-          SearchScreen(
-            initialCategory: null,
-            onOpenGame: _openGame,
-          ),
-          LibraryScreen(
-            controller: widget.controller,
-            onBrowse: () => _setTab(0),
-          ),
-          const DownloadsScreen(),
-          ProfileScreen(controller: widget.controller),
+          DownloadsScreen(controller: widget.controller),
         ],
       ),
       bottomNavigationBar: ListenableBuilder(
@@ -152,7 +149,7 @@ class _MainShellState extends State<MainShell> {
       size: 22,
       color: selected ? EpicColors.textPrimary : EpicColors.textSecondary,
     );
-    if (i == 3 && DownloadManager.instance.hasActive) {
+    if (i == 1 && DownloadManager.instance.hasActive) {
       return Stack(
         clipBehavior: Clip.none,
         children: [

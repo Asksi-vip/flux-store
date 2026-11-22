@@ -76,7 +76,7 @@ Widget buildGameCover(Game game, {BoxFit fit = BoxFit.cover}) {
   return FadeInNetworkImage(url: url, fit: fit);
 }
 
-/// بطاقة لعبة بأسلوب Epic Games: غلاف حاد الزوايا بنسبة 3:4 مع شارة خصم ومؤثر ضغط.
+/// بطاقة لعبة بأسلوب تطبيق Epic للجوال: غلاف بحواف دائرية وإطار رقيق + حبة سعر/تثبيت.
 class GameCard extends StatefulWidget {
   const GameCard({super.key, required this.game, this.onTap});
 
@@ -106,19 +106,28 @@ class _GameCardState extends State<GameCard> {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
+            // الغلاف بحواف دائرية وإطار مثل بطاقات Epic
             AspectRatio(
               aspectRatio: 3 / 4,
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  buildGameCover(game),
-                  if (game.hasDiscount)
-                    Positioned(
-                      top: 8,
-                      left: 8,
-                      child: DiscountBadge(percent: game.discountPercent),
-                    ),
-                ],
+              child: Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: EpicColors.border),
+                  color: EpicColors.surface,
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    buildGameCover(game),
+                    if (game.hasDiscount)
+                      Positioned(
+                        top: 8,
+                        start: 8,
+                        child: DiscountBadge(percent: game.discountPercent),
+                      ),
+                  ],
+                ),
               ),
             ),
             const SizedBox(height: 10),
@@ -142,8 +151,13 @@ class _GameCardState extends State<GameCard> {
                 fontSize: 11,
               ),
             ),
-            const SizedBox(height: 6),
-            PriceTag(game: game, fontSize: 13),
+            const SizedBox(height: 8),
+            GamePricePill(
+              game: game,
+              onOpenGame: widget.onTap,
+              fontSize: 13,
+              compact: true,
+            ),
           ],
         ),
       ),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/game.dart';
+import '../services/download_manager.dart';
 import '../theme/app_theme.dart';
 
 /// شارة الخصم الزرقاء المربعة بأسلوب Epic: ‎-40%
@@ -27,34 +28,91 @@ class DiscountBadge extends StatelessWidget {
   }
 }
 
-/// شارة "مجاني" السماوية للألعاب ذات السعر الصفري.
-class FreeBadge extends StatelessWidget {
-  const FreeBadge({super.key, this.fontSize = 12});
+/// حبة السعر بأسلوب تطبيق Epic للجوال:
+/// - لعبة مجانية → زر "تثبيت" سماوي داخل حبة رمادية (بدون كلمة مجاني)
+/// - لعبة مدفوعة → السعر بالدولار داخل حبة رمادية بحواف دائرية
+class GamePricePill extends StatelessWidget {
+  const GamePricePill({
+    super.key,
+    required this.game,
+    this.onOpenGame,
+    this.fontSize = 13,
+    this.compact = false,
+  });
+
+  final Game game;
+
+  /// تُستدعى عند لمس الزر وهي لعبة غير قابلة للتحميل (فتح التفاصيل مثلًا)
+  final VoidCallback? onOpenGame;
 
   final double fontSize;
 
+  /// وضع مضغوط داخل البطاقات الصغيرة
+  final bool compact;
+
+  void _handleTap(BuildContext context) {
+    if (game.isDownloadable) {
+      DownloadManager.instance.start(game);
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(content: Text('بدأ تحميل ${game.name} — يكمل حتى لو انقطع النت')),
+        );
+      return;
+    }
+    onOpenGame?.call();
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: EpicColors.cyan.withOpacity(.15),
-        borderRadius: BorderRadius.circular(3),
-        border: Border.all(color: EpicColors.cyan),
-      ),
-      child: Text(
-        'مجاني',
-        style: TextStyle(
-          color: EpicColors.cyan,
-          fontSize: fontSize,
-          fontWeight: FontWeight.w800,
+    final Widget child = game.isFree
+        ? Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.download_rounded,
+                color: EpicColors.cyan,
+                size: fontSize + 4,
+              ),
+              const SizedBox(width: 5),
+              Text(
+                'تثبيت',
+                style: TextStyle(
+                  color: EpicColors.cyan,
+                  fontSize: fontSize,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          )
+        : Text(
+            game.finalPriceLabel,
+            style: TextStyle(
+              color: EpicColors.cyan,
+              fontSize: fontSize,
+              fontWeight: FontWeight.w800,
+            ),
+          );
+
+    return GestureDetector(
+      onTap: () => _handleTap(context),
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: compact ? 10 : 14,
+          vertical: compact ? 6 : 9,
         ),
+        decoration: BoxDecoration(
+          color: EpicColors.elevated,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: EpicColors.border),
+        ),
+        child: child,
       ),
     );
   }
 }
 
-/// صف السعر بأسلوب Epic: شارة الخصم + السعر الأصلي مشطوب + السعر النهائي.
+/// صف السعر بأسلوب Epic (للألعاب المدفوعة): شارة الخصم + السعر الأصلي مشطوب + النهائي.
 class PriceTag extends StatelessWidget {
   const PriceTag({
     super.key,
@@ -69,9 +127,6 @@ class PriceTag extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (game.isFree) {
-      return FreeBadge(fontSize: fontSize);
-    }
     if (game.hasDiscount && showBadge) {
       return Row(
         mainAxisSize: MainAxisSize.min,

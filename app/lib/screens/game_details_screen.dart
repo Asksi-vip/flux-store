@@ -60,6 +60,19 @@ class _GameDetailsScreenState extends State<GameDetailsScreen> {
       );
   }
 
+  /// لعبة مجانية بلا ملفات تحميل — رسالة واضحة بدل الفشل الصامت.
+  void _installNotAvailable() {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text(
+            'ملفات التحميل غير مضافة لهذه اللعبة بعد — أضف رابط APK من لوحة الإدارة',
+          ),
+        ),
+      );
+  }
+
   @override
   Widget build(BuildContext context) {
     final Game game = widget.game;
@@ -214,41 +227,46 @@ class _GameDetailsScreenState extends State<GameDetailsScreen> {
                                     onPressed: _toggleLibrary,
                                   ),
                                 )
-                              : KeyedSubtree(
-                                  key: const ValueKey<String>('out'),
-                                  child: EpicButton(
-                                    label: game.isFree
-                                        ? 'احصل عليها مجانًا'
-                                        : 'أضف إلى المكتبة',
-                                    icon: Icons.add_circle_outline_rounded,
-                                    onPressed: _toggleLibrary,
-                                  ),
-                                ),
+                          : KeyedSubtree(
+                              key: const ValueKey<String>('out'),
+                              child: game.isFree
+                                  ? EpicButton(
+                                      label: 'تثبيت مباشر',
+                                      icon: Icons.download_rounded,
+                                      onPressed: _installNotAvailable,
+                                    )
+                                  : EpicButton(
+                                      label: 'أضف إلى المكتبة',
+                                      icon: Icons.add_circle_outline_rounded,
+                                      onPressed: _toggleLibrary,
+                                    ),
+                            ),
                     ),
                     const SizedBox(height: 16),
-                    // صف السعر مع قيمة التوفير
-                    Container(
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: EpicColors.surface,
-                        borderRadius: BorderRadius.circular(4),
-                        border: Border.all(color: EpicColors.border),
-                      ),
-                      child: Row(
-                        children: [
-                          Expanded(child: PriceTag(game: game, fontSize: 16)),
-                          if (game.hasDiscount)
-                            Text(
-                              'وفّر \$${(game.price - game.finalPrice).toStringAsFixed(2)}',
-                              style: const TextStyle(
-                                color: EpicColors.cyan,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
+                    // صف السعر — للألعاب المدفوعة فقط (المجانية زر تثبيت مباشر بدل السعر)
+                    if (!game.isFree)
+                      Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: EpicColors.surface,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: EpicColors.border),
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(child: PriceTag(game: game, fontSize: 16)),
+                            if (game.hasDiscount)
+                              Text(
+                                'وفّر \$${(game.price - game.finalPrice).toStringAsFixed(2)}',
+                                style: const TextStyle(
+                                  color: EpicColors.cyan,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
-                            ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
                     const SizedBox(height: 20),
                     // معلومات التحميل: الإصدار، الحجم، وملفات OBB/Data بمساراتها التلقائية
                     if (game.download != null && game.download!.available) ...[
