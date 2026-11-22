@@ -8,7 +8,7 @@ class FadeInSlide extends StatefulWidget {
     super.key,
     required this.child,
     this.delay = Duration.zero,
-    this.duration = const Duration(milliseconds: 450),
+    this.duration = const Duration(milliseconds: 500),
   });
 
   final Widget child;
@@ -28,7 +28,7 @@ class _FadeInSlideState extends State<FadeInSlide>
 
   late final CurvedAnimation _curve = CurvedAnimation(
     parent: _controller,
-    curve: Curves.easeOutCubic,
+    curve: Curves.easeOutQuart,
   );
 
   @override

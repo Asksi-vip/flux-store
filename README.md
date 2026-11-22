@@ -5,7 +5,7 @@
 | الجزء | التقنية | المسار |
 |---|---|---|
 | 📱 تطبيق Android | **Flutter (Dart) أصلي** — الكود كامل في `/app/lib` | `/app` |
-| ⚙️ Backend API | Python + Django + Django REST Framework | `/api` |
+| ⚙️ Backend API | **PHP 7.4+ / 8 + SQLite** (بلا قواعد بيانات خارجية) | `/php-api` |
 
 > ملاحظة: التطبيق **ليس HTML** — كود Flutter/Dart أصلي (24 ملفًا في `app/lib/`) يبنيه GitHub Actions إلى APK عبر SDK الرسمي في السحابة.
 
@@ -50,55 +50,47 @@
 - **تنقل سفلي مخصص**: مؤشر أزرق متحرك + تكبير الأيقونة المختارة
 - **سحب لتحديث** + حالات فارغة + رسائل أخطاء شبكة عربية واضحة
 
-## ⚙️ تشغيل الـ API (Django)
+## 🐘 الـ API بلغة PHP (للاستضافة العادية مثل serv00)
 
-المتطلبات: Python 3.10+
+الـ API مبني بـ PHP خالص + SQLite — لا يحتاج MySQL ولا Python ولا أي إعداد معقد.
 
-```bash
-cd api
+### الرفع على الاستضافة (serv00)
 
-# 1) بيئة افتراضية
-python -m venv .venv
-source .venv/bin/activate        # ويندوز: .venv\Scripts\activate
+1. ارفع **محتويات** مجلد `php-api/` إلى: `domains/<اسمك>.serv00.net/public_html/flux/api/`
+   (عبر FTP أو SFTP أو مدير الملفات في لوحة serv00)
+2. تأكد أن إصدار PHP من لوحة serv00 هو **7.4 أو أحدث** (الافتراضي مناسب)
+3. افتح رابط الـ API في المتصفح — قاعدة البيانات تُنشأ وتُملأ **تلقائيًا** بأول طلب:
+   - الـ API: `http://camillecyrm.serv00.net/flux/api/games/`
+   - لوحة الإدارة: `http://camillecyrm.serv00.net/flux/api/admin.php`
+4. ⚠️ غيّر كلمة مرور لوحة الإدارة من `php-api/config.php` (`FLUX_ADMIN_PASSWORD`)
 
-# 2) الاعتماديات
-pip install -r requirements.txt
+إن ظهرت رسالة عن قاعدة البيانات: فعّل `pdo_sqlite` من إعدادات PHP في لوحة الاستضافة، أو أعط مجلد `data/` صلاحية كتابة (755/775).
 
-# 3) قاعدة البيانات + البيانات التجريبية (10 ألعاب)
-python manage.py migrate
-python manage.py loaddata games
-
-# 4) حساب لوحة التحكم
-python manage.py createsuperuser
-
-# 5) التشغيل
-python manage.py runserver
-```
-
-الآن:
-
-- الـ API: `http://127.0.0.1:8000/api/games/`
-- لوحة التحكم النيونية: `http://127.0.0.1:8000/admin/`
-
-اختبار الوحدات:
+### التشغيل المحلي (للتجربة)
 
 ```bash
-python manage.py test
+cd php-api
+php -S localhost:8000
+# ثم: http://localhost:8000/games/  و  http://localhost:8000/admin.php
 ```
+
+على محاكي Android استخدم `http://10.0.2.2:8000` في `app/lib/config.dart`.
 
 ## 🔌 نقاط النهاية (Endpoints)
 
+الأساس: `http://camillecyrm.serv00.net/flux/api`
+
 | المسار | الوصف |
 |---|---|
-| `GET /api/games/` | قائمة الألعاب (تقسيم صفحات: `{count, next, previous, results}`) |
-| `GET /api/games/{id}/` | تفاصيل لعبة |
-| `GET /api/games/?search=cyber` | بحث بالاسم أو الوصف (icontains) |
-| `GET /api/games/?category=rpg` | فلترة حسب التصنيف |
-| `GET /api/games/?min_price=10&max_price=50` | فلترة حسب السعر |
-| `GET /api/games/?featured=true` | الألعاب المميزة فقط |
-| `GET /api/games/?ordering=-rating` | ترتيب (price / rating / name / release_date، مع `-` للعكس) |
-| `GET /api/games/?page=2&page_size=5` | تقسيم صفحات مخصص (حتى 50) |
-| `GET /api/games/featured/` | الألعاب المميزة (نقطة نهاية إضافية) |
+| `GET /games/` | قائمة الألعاب (تقسيم صفحات: `{count, next, previous, results}`) |
+| `GET /games/{id}/` | تفاصيل لعبة |
+| `GET /games/?search=cyber` | بحث بالاسم أو الوصف |
+| `GET /games/?category=rpg` | فلترة حسب التصنيف |
+| `GET /games/?min_price=10&max_price=50` | فلترة حسب السعر |
+| `GET /games/?featured=true` | الألعاب المميزة فقط |
+| `GET /games/?ordering=-rating` | ترتيب (price / rating / name / release_date، مع `-` للعكس) |
+| `GET /games/?page=2&page_size=5` | تقسيم صفحات مخصص (حتى 50) |
+| `GET /games/featured/` | الألعاب المميزة (يستخدمها البانر السينمائي) |
 
 مثال لعبة من الاستجابة:
 
@@ -107,15 +99,15 @@ python manage.py test
   "id": 1,
   "name": "Cyberpunk 2077",
   "description": "...",
-  "price": "59.99",
-  "discount_price": "29.99",
-  "final_price": "29.99",
+  "price": 59.99,
+  "discount_price": 29.99,
+  "final_price": 29.99,
   "has_discount": true,
   "category": "rpg",
   "category_display": "لعب أدوار (RPG)",
   "rating": 4.6,
-  "image": "https://placehold.co/600x800/...",
-  "banner": "https://placehold.co/1280x480/...",
+  "image": "https://cdn.cloudflare.steamstatic.com/steam/apps/1091500/library_600x900.jpg",
+  "banner": "https://cdn.cloudflare.steamstatic.com/steam/apps/1091500/library_hero.jpg",
   "release_date": "2020-12-10",
   "is_featured": true
 }
@@ -142,10 +134,10 @@ flutter run
 
 العنوان مضبوط في ملف واحد: `app/lib/config.dart`
 
-- **محاكي Android** (الافتراضي): `http://10.0.2.2:8000` — يشير تلقائيًا إلى جهاز الكمبيوتر
-- **جهاز حقيقي على نفس الشبكة**: ضع IP الكمبيوتر، مثل `http://192.168.1.10:8000`
+- **الإنتاج (الافتراضي):** `http://camillecyrm.serv00.net/flux/api` — يعمل على أي جهاز فورًا
+- **خادم محلي على المحاكي:** `http://10.0.2.2:8000` (مع `php -S localhost:8000` داخل php-api)
+- **جهاز حقيقي مع خادم محلي:** ضع IP الكمبيوتر مثل `http://192.168.1.10:8000`
   (اعرفه بـ `ipconfig` على ويندوز أو `ifconfig`/`ip a` على لينكس)
-- **بديل عبر USB**: شغّل `adb reverse tcp:8000 tcp:8000` ثم استخدم `http://127.0.0.1:8000`
 
 ### 🔨 أوامر بناء APK
 
@@ -165,45 +157,34 @@ flutter install
 flutter build apk --debug
 ```
 
-## 🛠 لوحة تحكم Django
+## 🛠 لوحة إدارة PHP (admin.php)
 
-- العنوان: `/admin/` — إدارة كاملة للألعاب: إضافة/تعديل/حذف، **رفع صور** الغلاف والبانر من الجهاز، معاينة مصغرة في الجدول، بحث وفلترة حسب التصنيف والتمييز
-- الصور المرفوعة تُخزن في `api/media/` وتُخدم من `/media/`، وتأخذ الأولوية تلقائيًا على الروابط الخارجية
+- العنوان: `http://camillecyrm.serv00.net/flux/api/admin.php` — محمية بكلمة مرور من `config.php`
+- إدارة كاملة: **إضافة/تعديل/حذف** الألعاب، تحديد السعر وسعر الخصم والتصنيف والتقييم والتمييز
+- الصور برابط مباشر (مثال: روابط Steam CDN) مع معاينة مصغرة في الجدول وشارات الخصم والمجاني
+- التنسيق بنفس هوية Epic الداكنة ومتوافق مع الجوال
 
 ## 🗂 البيانات التجريبية
 
-**الأفضل: صور حقيقية من Steam CDN** — نفّذ داخل مجلد `api`:
+تلقائية بالكامل: أول طلب على الـ API ينشئ قاعدة SQLite ويملأها بـ **14 لعبة مشهورة بصور حقيقية** من Steam CDN: Cyberpunk 2077، Elden Ring، RDR2، GTA V، The Witcher 3، Dota 2، Counter-Strike 2، Forza Horizon 5، It Takes Two، Hades، Stardew Valley، Hollow Knight، EA FC 24، Baldur's Gate 3 — بأسعار وخصومات تجريبية.
 
-```bash
-python manage.py seed_games          # 14 لعبة مشهورة بصور حقيقية (آمن للتكرار)
-python manage.py seed_games --reset  # حذف الكل وإعادة التعبئة
-```
-
-تشمل: Cyberpunk 2077، Elden Ring، RDR2، GTA V، The Witcher 3، Dota 2، Counter-Strike 2، Forza Horizon 5، It Takes Two، Hades، Stardew Valley، Hollow Knight، EA FC 24، Baldur's Gate 3 — بأسعار وخصومات تجريبية وغلاف 600x900 وبانر library_hero حقيقيان.
-
-بديل قديم: `api/games/fixtures/games.json` (10 ألعاب بصور placeholder) عبر `python manage.py loaddata games`.
+لإعادة التعبئة من الصفر: احذف ملف `php-api/data/flux_store.db` وأعد تحميل أي صفحة.
 
 ## 🧱 بنية المشروع
 
 ```
 flux-store/
-├── api/                        # Django + DRF
-│   ├── flux_api/               # إعدادات المشروع
-│   ├── games/
-│   │   ├── models.py           # موديل Game
-│   │   ├── serializers.py      # محول JSON مع حقول محسوبة
-│   │   ├── views.py            # ViewSet + بحث + فلترة + ترتيب
-│   │   ├── pagination.py       # 10 عناصر/صفحة
-│   │   ├── admin.py            # لوحة تحكم متقدمة
-│   │   ├── templates/admin/    # الثيم النيوني للوحة
-│   │   ├── fixtures/games.json # 10 ألعاب تجريبية
-│   │   └── tests.py            # 7 اختبارات وحدة
-│   ├── requirements.txt
-│   └── manage.py
+├── php-api/                    # الـ API بلغة PHP (ارفع محتوياته إلى flux/api على الاستضافة)
+│   ├── index.php               # الراوتر: /games/ و /games/{id}/ و /games/featured/ + الفلاتر
+│   ├── db.php                  # SQLite + إنشاء الجدول + تعبئة تلقائية + دوال مساعدة
+│   ├── config.php              # كلمة مرور الإدارة ومسار قاعدة البيانات
+│   ├── admin.php               # لوحة إدارة الألعاب (إضافة/تعديل/حذف)
+│   ├── data/.htaccess          # حماية ملف قاعدة البيانات من التحميل المباشر
+│   └── .htaccess               # توجيه المسارات النظيفة إلى index.php
 └── app/                        # Flutter (Dart أصلي)
     ├── lib/
     │   ├── main.dart           # نقطة البداية (RTL عربي + ثيم Epic)
-    │   ├── config.dart         # عنوان الخادم
+    │   ├── config.dart         # عنوان الخادم (افتراضيًا: serv00)
     │   ├── theme/app_theme.dart# ألوان Epic (#101014 / #0074E4) وثيم كامل
     │   ├── models/game.dart
     │   ├── services/           # dio API + SharedPreferences
@@ -215,7 +196,7 @@ flux-store/
 
 ## ⚠️ ملاحظات للإنتاج
 
-- عيّن `FLUX_SECRET_KEY` و `FLUX_DEBUG=false` وحدّد `ALLOWED_HOSTS`
-- استبدل `CORS_ALLOW_ALL_ORIGINS` بقائمة نطاقات محددة
-- أضف مصادقة للـ API (Token/JWT) بدل `AllowAny`
-- انتقل من SQLite إلى PostgreSQL وخدم الملفات من S3 أو ما شابه
+- غيّر `FLUX_ADMIN_PASSWORD` في `php-api/config.php` فورًا بعد الرفع
+- ملف قاعدة البيانات `data/flux_store.db` محمي عبر `.htaccess` — لا تحذفه إن أردت حفظ بياناتك
+- إن أردت HTTPS فعّل الشهادة المجانية من لوحة serv00 ثم بدّل العنوان في `config.dart` إلى `https://`
+- للانتقال لقاعدة بيانات MySQL لاحقًا: بدّل اتصال PDO في `db.php` فقط — كل ما عدا ذلك لا يتغير

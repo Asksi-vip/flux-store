@@ -87,8 +87,8 @@ jobs:
           name: "Flux APK — بناء #${{ github.run_number }}"
           files: dist/flux-store.apk
           body: |
-            بناء تلقائي (release) لتطبيق **Flux — متجر الألعاب**.
+            بناء تلقائي (release) لتطبيق **Flux — متجر الألعاب بأسلوب Epic Games**.
 
             **التثبيت:** نزّل `flux-store.apk` وثبّته مباشرة على أي أندرويد 7+ (اسمح بخيار "مصادر غير معروفة" من الإعدادات إن طُلب).
 
-            **الاتصال بالـ API:** التطبيق مضبوط على `http://10.0.2.2:8000` للمحاكي — على جهاز حقيقي غيّر العنوان في `app/lib/config.dart` إلى IP جهاز الكمبيوتر، أو استخدم `adb reverse tcp:8000 tcp:8000`.
+            **الاتصال بالـ API:** التطبيق مضبوط مسبقًا على خادم PHP المستضاف: `http://camillecyrm.serv00.net/flux/api` — يعمل فورًا بلا أي إعداد. لوحة إدارة المتجر: `http://camillecyrm.serv00.net/flux/api/admin.php` (كلمة المرور في `php-api/config.php`). للتطوير المحلي بدّل العنوان في `app/lib/config.dart`.

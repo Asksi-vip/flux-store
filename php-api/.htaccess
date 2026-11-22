@@ -1,0 +1,8 @@
+# توجيه كل الطلبات إلى index.php (يحفظ المسارات النظيفة مثل /games/5/)
+# ملفات PHP الحقيقية مثل admin.php تُخدم مباشرة كما هي.
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^(.*)$ index.php [QSA,L]
+</IfModule>

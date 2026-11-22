@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../controllers/library_controller.dart';
 import '../models/game.dart';
@@ -134,7 +135,10 @@ class _MainShellState extends State<MainShell> {
     final bool selected = i == _index;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTap: () => _setTab(i),
+      onTap: () {
+        HapticFeedback.selectionClick();
+        _setTab(i);
+      },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         padding: const EdgeInsets.symmetric(vertical: 8),

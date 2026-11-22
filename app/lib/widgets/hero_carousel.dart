@@ -39,7 +39,7 @@ class _HeroCarouselState extends State<HeroCarousel> {
     final int next = (_index + 1) % widget.games.length;
     _pageController.animateToPage(
       next,
-      duration: const Duration(milliseconds: 650),
+      duration: const Duration(milliseconds: 750),
       curve: Curves.easeInOutCubic,
     );
   }
@@ -132,19 +132,7 @@ class _HeroCarouselState extends State<HeroCarousel> {
               ),
             )
           else
-            Image.network(
-              url,
-              fit: BoxFit.cover,
-              errorBuilder: (context, error, stackTrace) => Container(
-                color: EpicColors.surface,
-                alignment: Alignment.center,
-                child: const Icon(
-                  Icons.sports_esports,
-                  color: EpicColors.border,
-                  size: 44,
-                ),
-              ),
-            ),
+            FadeInNetworkImage(url: url, fit: BoxFit.cover),
           Container(
             decoration: BoxDecoration(
               gradient: LinearGradient(

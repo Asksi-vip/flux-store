@@ -79,21 +79,16 @@ class _GameDetailsScreenState extends State<GameDetailsScreen> {
                   SizedBox(
                     height: 280,
                     width: double.infinity,
-                    child: bannerUrl.isEmpty
-                        ? Container(
-                            color: EpicColors.surface,
-                            alignment: Alignment.center,
-                            child: const Icon(
-                              Icons.sports_esports,
-                              color: EpicColors.border,
-                              size: 48,
-                            ),
-                          )
-                        : Image.network(
-                            bannerUrl,
-                            fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) =>
-                                Container(
+                    // زوم سينمائي: البانر يبدأ مكبرًا 8% ثم يتقلص بسلاسة (إحساس Epic)
+                    child: TweenAnimationBuilder<double>(
+                      tween: Tween<double>(begin: 1.08, end: 1.0),
+                      duration: const Duration(milliseconds: 900),
+                      curve: Curves.easeOutCubic,
+                      builder: (context, double scale, Widget? child) {
+                        return Transform.scale(scale: scale, child: child);
+                      },
+                      child: bannerUrl.isEmpty
+                          ? Container(
                               color: EpicColors.surface,
                               alignment: Alignment.center,
                               child: const Icon(
@@ -101,8 +96,12 @@ class _GameDetailsScreenState extends State<GameDetailsScreen> {
                                 color: EpicColors.border,
                                 size: 48,
                               ),
+                            )
+                          : FadeInNetworkImage(
+                              url: bannerUrl,
+                              fit: BoxFit.cover,
                             ),
-                          ),
+                    ),
                   ),
                   Container(
                     height: 280,

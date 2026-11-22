@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../theme/app_theme.dart';
 
@@ -55,10 +56,17 @@ class _EpicButtonState extends State<EpicButton> {
   Widget build(BuildContext context) {
     final bool enabled = widget.onPressed != null;
     return GestureDetector(
-      onTapDown: (_) => setState(() => _pressed = true),
+      onTapDown: (_) {
+        if (widget.onPressed != null) setState(() => _pressed = true);
+      },
       onTapUp: (_) => setState(() => _pressed = false),
       onTapCancel: () => setState(() => _pressed = false),
-      onTap: widget.onPressed,
+      onTap: widget.onPressed == null
+          ? null
+          : () {
+              HapticFeedback.selectionClick();
+              widget.onPressed!();
+            },
       child: AnimatedScale(
         scale: _pressed ? 0.96 : 1,
         duration: const Duration(milliseconds: 120),
