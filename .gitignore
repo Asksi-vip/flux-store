@@ -1,0 +1,23 @@
+# بايثون — Django
+__pycache__/
+*.py[cod]
+*.sqlite3
+.venv/
+venv/
+.env
+api/media/
+
+# Flutter / Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+pubspec.lock
+*.iml
+.idea/
+.vscode/
+
+# أنظمة التشغيل
+.DS_Store
+Thumbs.db

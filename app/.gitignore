@@ -1,0 +1,23 @@
+# ملفات Flutter/Dart المؤقتة
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+pubspec.lock
+
+# مخرجات البناء
+build/
+*.iml
+
+# بيئات التطوير
+.idea/
+.vscode/
+*.ipr
+*.iws
+
+# منصات إضافية
+ios/Pods/
+android/.gradle/
+android/local.properties
+android/key.properties
+**/android/app/.cxx/
