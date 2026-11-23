@@ -53,6 +53,8 @@ jobs:
               "android.permission.POST_NOTIFICATIONS": '<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n    ',
               "android.permission.WAKE_LOCK": '<uses-permission android:name="android.permission.WAKE_LOCK"/>\n    ',
               "android.permission.REQUEST_INSTALL_PACKAGES": '<uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>\n    ',
+              "android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION": '<uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION"/>\n    ',
+              "android.permission.ENFORCE_UPDATE_OWNERSHIP": '<uses-permission android:name="android.permission.ENFORCE_UPDATE_OWNERSHIP"/>\n    ',
           }
           for perm, tag in perms.items():
               if perm not in s:
@@ -76,6 +78,13 @@ jobs:
                   '            android:name="com.fluxstore.flux_store.DownloadService"\n'
                   '            android:exported="false"\n'
                   '            android:foregroundServiceType="dataSync"/>\n'
+                  '        <receiver\n'
+                  '            android:name="com.fluxstore.flux_store.FluxInstallReceiver"\n'
+                  '            android:exported="true">\n'
+                  '            <intent-filter>\n'
+                  '                <action android:name="com.fluxstore.flux_store.ACTION_INSTALL_STATUS"/>\n'
+                  '            </intent-filter>\n'
+                  '        </receiver>\n'
                   '        <provider\n'
                   '            android:name="androidx.core.content.FileProvider"\n'
                   '            android:authorities="com.fluxstore.flux_store.fileprovider"\n'
@@ -832,8 +841,12 @@ jobs:
               import android.app.Notification
               import android.app.NotificationChannel
               import android.app.NotificationManager
+              import android.app.PendingIntent
+              import android.content.BroadcastReceiver
               import android.content.Context
               import android.content.Intent
+              import android.content.pm.PackageInstaller
+              import android.content.pm.PackageManager
               import android.os.Build
               import androidx.core.content.ContextCompat
               import androidx.core.content.FileProvider
@@ -841,146 +854,251 @@ jobs:
               import io.flutter.embedding.engine.FlutterEngine
               import io.flutter.plugin.common.MethodChannel
               import java.io.File
+              import java.io.FileInputStream
 
-              /** MainActivity مع قناة flux.background: محرك التحميل الأصلي (خدمة
-               *  الخلفية) + قراءة حالة التقدم + تثبيت الـ APK + كشف تثبيت اللعبة
-               *  وتشغيلها + إشعار الجاهزية بعد نقل الملفات. */
+              /** مدمج لتلقي نتيجة التثبيت عبر PackageInstaller Session مثل متجر Epic Games */
+              class FluxInstallReceiver : BroadcastReceiver() {
+                  companion object {
+                      const val ACTION_INSTALL_STATUS = "com.fluxstore.flux_store.ACTION_INSTALL_STATUS"
+                  }
+
+                  override fun onReceive(context: Context, intent: Intent) {
+                      if (intent.action != ACTION_INSTALL_STATUS) return
+                      val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
+                      val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
+                      val pkg = intent.getStringExtra(PackageInstaller.EXTRA_OTHER_PACKAGE_NAME)
+                          ?: intent.getStringExtra("packageName") ?: ""
+                      val gameId = intent.getIntExtra("gameId", 0)
+
+                      when (status) {
+                          PackageInstaller.STATUS_PENDING_USER_ACTION -> {
+                              val confirmIntent = if (Build.VERSION.SDK_INT >= 33) {
+                                  intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)
+                              } else {
+                                  @Suppress("DEPRECATION")
+                                  intent.getParcelableExtra(Intent.EXTRA_INTENT)
+                              }
+                              if (confirmIntent != null) {
+                                  confirmIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                  context.startActivity(confirmIntent)
+                              }
+                          }
+                          PackageInstaller.STATUS_SUCCESS -> {
+                              MainActivity.channel?.invokeMethod("onInstallResult", mapOf(
+                                  "pkg" to pkg,
+                                  "gameId" to gameId,
+                                  "success" to true,
+                                  "message" to "تم التثبيت بنجاح"
+                              ))
+                          }
+                          else -> {
+                              MainActivity.channel?.invokeMethod("onInstallResult", mapOf(
+                                  "pkg" to pkg,
+                                  "gameId" to gameId,
+                                  "success" to false,
+                                  "message" to (message ?: "فشل التثبيت")
+                              ))
+                          }
+                      }
+                  }
+              }
+
+              /** MainActivity مع قناة flux.background: محرك التحميل الأصلي + تثبيت PackageInstaller بأسلوب Epic Games */
               class MainActivity : FlutterActivity() {
+                  companion object {
+                      var channel: MethodChannel? = null
+                  }
 
                   override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
                       super.configureFlutterEngine(flutterEngine)
-                      MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "flux.background")
-                          .setMethodCallHandler { call, result ->
-                              val intent = Intent(this, DownloadService::class.java)
-                              when (call.method) {
-                                  "download" -> {
-                                      // إرسال مهمة تحميل كاملة إلى محرك الخلفية الأصلي
-                                      intent.action = DownloadService.ACTION_START
-                                      intent.putExtra("gameId", call.argument<Int>("gameId") ?: 0)
-                                      intent.putExtra("name", call.argument<String>("name") ?: "تحميل لعبة")
-                                      intent.putExtra("icon", call.argument<String>("icon") ?: "")
-                                      // JSON مُشفَّر من Dart — يُحلَّل في الخدمة بـ org.json
-                                      intent.putExtra("files", call.argument<String>("filesJson") ?: "[]")
-                                      ContextCompat.startForegroundService(this, intent)
-                                      result.success(true)
-                                  }
-                                  "pause" -> {
-                                      intent.action = DownloadService.ACTION_PAUSE
-                                      intent.putExtra("gameId", call.argument<Int>("gameId") ?: 0)
-                                      startService(intent)
-                                      result.success(null)
-                                  }
-                                  "cancel" -> {
-                                      intent.action = DownloadService.ACTION_CANCEL
-                                      intent.putExtra("gameId", call.argument<Int>("gameId") ?: 0)
-                                      startService(intent)
-                                      result.success(null)
-                                  }
-                                  "getState" -> {
-                                      result.success(DownloadService.stateJson ?: "")
-                                  }
-                                  "start" -> {
-                                      // مسار dio الاحتياطي: إشعار أمامي عام
-                                      intent.action = DownloadService.ACTION_START
-                                      intent.putExtra("title", call.argument<String>("title") ?: "تحميل لعبة")
-                                      ContextCompat.startForegroundService(this, intent)
-                                      result.success(null)
-                                  }
-                                  "update" -> {
-                                      intent.action = DownloadService.ACTION_UPDATE
-                                      intent.putExtra("title", call.argument<String>("title") ?: "تحميل لعبة")
-                                      intent.putExtra("progress", call.argument<String>("progress") ?: "")
-                                      startService(intent)
-                                      result.success(null)
-                                  }
-                                  "stop" -> {
-                                      intent.action = DownloadService.ACTION_STOP
-                                      startService(intent)
-                                      result.success(null)
-                                  }
-                                  "installApk" -> {
-                                      val path = call.argument<String>("path") ?: ""
-                                      try {
-                                          val file = File(path)
-                                          if (file.exists() && file.length() > 0) {
-                                              val uri = FileProvider.getUriForFile(
-                                                  this,
-                                                  packageName + ".fileprovider",
-                                                  file
-                                              )
-                                              val install = Intent(Intent.ACTION_VIEW)
-                                              install.setDataAndType(
-                                                  uri,
-                                                  "application/vnd.android.package-archive"
-                                              )
-                                              install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                              install.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                              startActivity(install)
-                                              result.success(true)
-                                          } else {
-                                              result.success(false)
-                                          }
-                                      } catch (e: Exception) {
+                      val ch = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "flux.background")
+                      channel = ch
+                      ch.setMethodCallHandler { call, result ->
+                          val intent = Intent(this, DownloadService::class.java)
+                          when (call.method) {
+                              "download" -> {
+                                  intent.action = DownloadService.ACTION_START
+                                  intent.putExtra("gameId", call.argument<Int>("gameId") ?: 0)
+                                  intent.putExtra("name", call.argument<String>("name") ?: "تحميل لعبة")
+                                  intent.putExtra("icon", call.argument<String>("icon") ?: "")
+                                  intent.putExtra("files", call.argument<String>("filesJson") ?: "[]")
+                                  ContextCompat.startForegroundService(this, intent)
+                                  result.success(true)
+                              }
+                              "pause" -> {
+                                  intent.action = DownloadService.ACTION_PAUSE
+                                  intent.putExtra("gameId", call.argument<Int>("gameId") ?: 0)
+                                  startService(intent)
+                                  result.success(null)
+                              }
+                              "cancel" -> {
+                                  intent.action = DownloadService.ACTION_CANCEL
+                                  intent.putExtra("gameId", call.argument<Int>("gameId") ?: 0)
+                                  startService(intent)
+                                  result.success(null)
+                              }
+                              "getState" -> {
+                                  result.success(DownloadService.stateJson ?: "")
+                              }
+                              "start" -> {
+                                  intent.action = DownloadService.ACTION_START
+                                  intent.putExtra("title", call.argument<String>("title") ?: "تحميل لعبة")
+                                  ContextCompat.startForegroundService(this, intent)
+                                  result.success(null)
+                              }
+                              "update" -> {
+                                  intent.action = DownloadService.ACTION_UPDATE
+                                  intent.putExtra("title", call.argument<String>("title") ?: "تحميل لعبة")
+                                  intent.putExtra("progress", call.argument<String>("progress") ?: "")
+                                  startService(intent)
+                                  result.success(null)
+                              }
+                              "stop" -> {
+                                  intent.action = DownloadService.ACTION_STOP
+                                  startService(intent)
+                                  result.success(null)
+                              }
+                              "installApk" -> {
+                                  val path = call.argument<String>("path") ?: ""
+                                  val pkg = call.argument<String>("pkg") ?: ""
+                                  val gameId = call.argument<Int>("gameId") ?: 0
+                                  val name = call.argument<String>("name") ?: ""
+                                  try {
+                                      val file = File(path)
+                                      if (!file.exists() || file.length() <= 0) {
                                           result.success(false)
+                                          return@setMethodCallHandler
                                       }
-                                  }
-                                  "isPackageInstalled" -> {
-                                      val pkg = call.argument<String>("pkg") ?: ""
-                                      result.success(
-                                          try {
-                                              packageManager.getPackageInfo(pkg, 0)
-                                              true
-                                          } catch (e: Exception) {
-                                              false
-                                          }
+
+                                      // 1) تثبيت مباشر واحترافي بأسلوب Epic Games عبر PackageInstaller Session
+                                      val installedViaSession = installViaPackageInstaller(file, pkg, gameId, name)
+                                      if (installedViaSession) {
+                                          result.success(true)
+                                          return@setMethodCallHandler
+                                      }
+
+                                      // 2) البديل الاحتياطي: فتح عبر FileProvider
+                                      val uri = FileProvider.getUriForFile(
+                                          this,
+                                          packageName + ".fileprovider",
+                                          file
                                       )
+                                      val install = Intent(Intent.ACTION_VIEW).apply {
+                                          setDataAndType(uri, "application/vnd.android.package-archive")
+                                          addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                          addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                      }
+                                      startActivity(install)
+                                      result.success(true)
+                                  } catch (e: Exception) {
+                                      result.success(false)
                                   }
-                                  "launchApp" -> {
-                                      val pkg = call.argument<String>("pkg") ?: ""
+                              }
+                              "isPackageInstalled" -> {
+                                  val pkg = call.argument<String>("pkg") ?: ""
+                                  result.success(
                                       try {
-                                          val launch = packageManager.getLaunchIntentForPackage(pkg)
-                                          if (launch == null) {
-                                              result.success(false)
-                                          } else {
-                                              launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                              startActivity(launch)
-                                              result.success(true)
-                                          }
+                                          packageManager.getPackageInfo(pkg, 0)
+                                          true
                                       } catch (e: Exception) {
+                                          false
+                                      }
+                                  )
+                              }
+                              "launchApp" -> {
+                                  val pkg = call.argument<String>("pkg") ?: ""
+                                  try {
+                                      val launch = packageManager.getLaunchIntentForPackage(pkg)
+                                      if (launch == null) {
                                           result.success(false)
+                                      } else {
+                                          launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                          startActivity(launch)
+                                          result.success(true)
                                       }
+                                  } catch (e: Exception) {
+                                      result.success(false)
                                   }
-                                  "notifyReady" -> {
-                                      try {
-                                          val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                                          if (Build.VERSION.SDK_INT >= 26) {
-                                              nm.createNotificationChannel(
-                                                  NotificationChannel(
-                                                      DownloadService.CHANNEL_ID,
-                                                      "تحميلات الألعاب",
-                                                      NotificationManager.IMPORTANCE_DEFAULT
-                                                  )
+                              }
+                              "notifyReady" -> {
+                                  try {
+                                      val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                                      if (Build.VERSION.SDK_INT >= 26) {
+                                          nm.createNotificationChannel(
+                                              NotificationChannel(
+                                                  DownloadService.CHANNEL_ID,
+                                                  "تحميلات الألعاب",
+                                                  NotificationManager.IMPORTANCE_DEFAULT
                                               )
-                                          }
-                                          val b = if (Build.VERSION.SDK_INT >= 26) {
-                                              Notification.Builder(this, DownloadService.CHANNEL_ID)
-                                          } else {
-                                              @Suppress("DEPRECATION")
-                                              Notification.Builder(this)
-                                          }
-                                          b.setSmallIcon(android.R.drawable.stat_sys_download_done)
-                                              .setContentTitle(call.argument<String>("title") ?: "اللعبة جاهزة")
-                                              .setContentText("اكتمل التثبيت ونقل الملفات — استمتع باللعب")
-                                              .setAutoCancel(true)
-                                          nm.notify(43, b.build())
-                                          result.success(null)
-                                      } catch (e: Exception) {
-                                          result.success(null)
+                                          )
                                       }
+                                      val b = if (Build.VERSION.SDK_INT >= 26) {
+                                          Notification.Builder(this, DownloadService.CHANNEL_ID)
+                                      } else {
+                                          @Suppress("DEPRECATION")
+                                          Notification.Builder(this)
+                                      }
+                                      b.setSmallIcon(android.R.drawable.stat_sys_download_done)
+                                          .setContentTitle(call.argument<String>("title") ?: "اللعبة جاهزة")
+                                          .setContentText("اكتمل التثبيت ونقل الملفات — استمتع باللعب")
+                                          .setAutoCancel(true)
+                                      nm.notify(43, b.build())
+                                      result.success(null)
+                                  } catch (e: Exception) {
+                                      result.success(null)
                                   }
-                                  else -> result.notImplemented()
+                              }
+                              else -> result.notImplemented()
+                          }
+                      }
+                  }
+
+                  private fun installViaPackageInstaller(file: File, pkg: String, gameId: Int, name: String): Boolean {
+                      return try {
+                          val packageInstaller = packageManager.packageInstaller
+                          val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
+                              if (pkg.isNotEmpty()) {
+                                  setAppPackageName(pkg)
+                              }
+                              if (name.isNotEmpty()) {
+                                  setAppLabel(name)
+                              }
+                              setSize(file.length())
+                              setInstallReason(PackageManager.INSTALL_REASON_USER)
+                              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                  setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+                              }
+                              if (Build.VERSION.SDK_INT >= 34) {
+                                  setRequestUpdateOwnership(true)
                               }
                           }
+
+                          val sessionId = packageInstaller.createSession(params)
+                          val session = packageInstaller.openSession(sessionId)
+
+                          session.openWrite("base.apk", 0, file.length()).use { out ->
+                              FileInputStream(file).use { input ->
+                                  input.copyTo(out)
+                              }
+                              session.fsync(out)
+                          }
+
+                          val intent = Intent(this, FluxInstallReceiver::class.java).apply {
+                              action = FluxInstallReceiver.ACTION_INSTALL_STATUS
+                              putExtra("sessionId", sessionId)
+                              putExtra("packageName", pkg)
+                              putExtra("gameId", gameId)
+                          }
+
+                          val flags = PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
+                          val pendingIntent = PendingIntent.getBroadcast(this, sessionId, intent, flags)
+
+                          session.commit(pendingIntent.intentSender)
+                          session.close()
+                          true
+                      } catch (e: Exception) {
+                          false
+                      }
                   }
               }
               ''').strip() + "\n"

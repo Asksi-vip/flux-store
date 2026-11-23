@@ -155,6 +155,7 @@ class DownloadManager extends ChangeNotifier with WidgetsBindingObserver {
       connectTimeout: const Duration(seconds: 15),
       receiveTimeout: const Duration(seconds: 60),
     ));
+    _bgChannel.setMethodCallHandler(_handleNativeCall);
     // مراقبة دورة الحياة: عند العودة من نافذة تثبيت أندرويد ننقل OBB/Data تلقائيًا
     try {
       WidgetsBinding.instance.addObserver(this);
@@ -479,7 +480,12 @@ class DownloadManager extends ChangeNotifier with WidgetsBindingObserver {
       try {
         final bool? ok = await _bgChannel.invokeMethod<bool>(
           'installApk',
-          <String, dynamic>{'path': apk.path},
+          <String, dynamic>{
+            'path': apk.path,
+            'pkg': t.package,
+            'name': t.game.name,
+            'gameId': t.game.id,
+          },
         );
         return ok ?? false;
       } catch (_) {
@@ -487,6 +493,36 @@ class DownloadManager extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
     return false;
+  }
+
+  /// استقبال إشعارات حالة التثبيت المباشرة من نظام أندرويد (PackageInstaller Session)
+  /// مثل Epic Games Store تمامًا عند اكتمال التثبيت الصامت أو اليدوي.
+  Future<dynamic> _handleNativeCall(MethodCall call) async {
+    if (call.method == 'onInstallResult') {
+      final Map args = (call.arguments as Map?) ?? const {};
+      final String pkg = args['pkg']?.toString() ?? '';
+      final int gameId = (args['gameId'] as num?)?.toInt() ?? 0;
+      final bool success = args['success'] == true;
+
+      if (success) {
+        DownloadTask? task = _tasks[gameId];
+        if (task == null && pkg.isNotEmpty) {
+          for (final t in _tasks.values) {
+            if (t.package == pkg) {
+              task = t;
+              break;
+            }
+          }
+        }
+        if (task != null) {
+          task.installed = true;
+          await _persist();
+          notifyListeners();
+          unawaited(_postInstallFlow());
+        }
+      }
+    }
+    return null;
   }
 
   /// مهمة ملف الـ APK داخل المهمة.
