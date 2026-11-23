@@ -28,6 +28,11 @@ function flux_db()
     if (!is_dir($dir)) {
         @mkdir($dir, 0775, true);
     }
+    // درع حماية دائم: منع فتح قاعدة البيانات من المتصفح مباشرة
+    $ht = $dir . '/.htaccess';
+    if (!file_exists($ht)) {
+        @file_put_contents($ht, "# منع الوصول المباشر لملفات قاعدة البيانات عبر المتصفح\nRequire all denied\n");
+    }
 
     $pdo = new PDO('sqlite:' . FLUX_DB_PATH);
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
