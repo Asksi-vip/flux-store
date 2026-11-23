@@ -236,7 +236,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             gradient: LinearGradient(
                               colors: loggedIn
                                   ? const [EpicColors.blue, EpicColors.cyan]
-                                  : [EpicColors.surfaceRaised, EpicColors.border],
+                                  : const [EpicColors.elevated, EpicColors.border],
                             ),
                             boxShadow: [
                               BoxShadow(

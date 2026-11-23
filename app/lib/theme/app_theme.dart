@@ -12,6 +12,7 @@ class EpicColors {
 
   /// سطح مرفوع: الحقول والعناصر التفاعلية
   static const Color elevated = Color(0xFF202024);
+  static const Color surfaceRaised = Color(0xFF202024);
 
   /// لون الحدود الرمادية الرقيقة
   static const Color border = Color(0xFF2A2A2A);
