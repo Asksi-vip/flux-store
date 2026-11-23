@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../controllers/library_controller.dart';
 import '../models/game.dart';
+import '../services/auth_service.dart';
 import '../services/download_manager.dart';
 import '../theme/app_theme.dart';
 import '../widgets/page_fade_transition.dart';
@@ -135,10 +136,37 @@ class _MainShellState extends State<MainShell> {
             icon: const Icon(Icons.search_rounded, size: 22),
             tooltip: 'البحث',
           ),
-          IconButton(
-            onPressed: _openProfile,
-            icon: const Icon(Icons.person_rounded, size: 22),
-            tooltip: 'حسابي',
+          ListenableBuilder(
+            listenable: AuthService.instance,
+            builder: (context, _) {
+              final user = AuthService.instance.currentUser;
+              final bool loggedIn = user != null;
+              return IconButton(
+                onPressed: _openProfile,
+                icon: loggedIn && user.name.isNotEmpty
+                    ? Container(
+                        width: 26,
+                        height: 26,
+                        alignment: Alignment.center,
+                        decoration: const BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: LinearGradient(
+                            colors: [EpicColors.blue, EpicColors.cyan],
+                          ),
+                        ),
+                        child: Text(
+                          user.name[0].toUpperCase(),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      )
+                    : const Icon(Icons.person_outline_rounded, size: 22),
+                tooltip: loggedIn ? user.name : 'حسابي',
+              );
+            },
           ),
         ],
       ),

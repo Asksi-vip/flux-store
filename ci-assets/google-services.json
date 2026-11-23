@@ -1,0 +1,49 @@
+{
+  "project_info": {
+    "project_number": "864539935993",
+    "firebase_url": "https://flux-games-default-rtdb.firebaseio.com",
+    "project_id": "flux-games",
+    "storage_bucket": "flux-games.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:864539935993:android:75e533ad978cf46e73ce28",
+        "android_client_info": {
+          "package_name": "com.fluxstore.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAfiC2sP9Z7mIf10TO3aVEtovHXWTFup3Q"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:864539935993:android:75e533ad978cf46e73ce28",
+        "android_client_info": {
+          "package_name": "com.fluxstore.flux_store"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAfiC2sP9Z7mIf10TO3aVEtovHXWTFup3Q"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

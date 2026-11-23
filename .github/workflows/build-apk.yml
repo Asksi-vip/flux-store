@@ -36,6 +36,51 @@ jobs:
         working-directory: app
         run: flutter create . --platforms android --org com.fluxstore
 
+      # نسخ ملف إعدادات Firebase وتفعيله في Gradle
+      - name: إعداد وتفعيل Firebase (Google Services)
+        working-directory: app
+        run: |
+          cp ../ci-assets/google-services.json android/app/google-services.json
+          python3 - <<'PY'
+          import os, re
+
+          # 1. إعداد settings.gradle لدعم إضافة google-services
+          settings_p = "android/settings.gradle"
+          if os.path.exists(settings_p):
+              s_txt = open(settings_p, encoding="utf-8").read()
+              if "com.google.gms.google-services" not in s_txt and "plugins {" in s_txt:
+                  s_txt = s_txt.replace("plugins {", 'plugins {\n    id "com.google.gms.google-services" version "4.4.2" apply false', 1)
+                  open(settings_p, "w", encoding="utf-8").write(s_txt)
+
+          # 2. إعداد build.gradle الجذر
+          root_bg = "android/build.gradle"
+          if os.path.exists(root_bg):
+              r_txt = open(root_bg, encoding="utf-8").read()
+              if "com.google.gms:google-services" not in r_txt:
+                  if "dependencies {" in r_txt:
+                      r_txt = r_txt.replace("dependencies {", "dependencies {\n        classpath 'com.google.gms:google-services:4.4.2'", 1)
+                  else:
+                      r_txt = "buildscript {\n    repositories {\n        google()\n        mavenCentral()\n    }\n    dependencies {\n        classpath 'com.google.gms:google-services:4.4.2'\n    }\n}\n\n" + r_txt
+                  open(root_bg, "w", encoding="utf-8").write(r_txt)
+
+          # 3. إعداد android/app/build.gradle
+          app_bg = "android/app/build.gradle"
+          if os.path.exists(app_bg):
+              a_txt = open(app_bg, encoding="utf-8").read()
+              # تفعيل إضافة com.google.gms.google-services
+              if "com.google.gms.google-services" not in a_txt:
+                  a_txt += "\napply plugin: 'com.google.gms.google-services'\n"
+              # ضبط applicationId على com.fluxstore.app ليتطابق مع Firebase
+              a_txt = re.sub(r'applicationId\s*=?\s*["\'][^"\']+["\']', 'applicationId = "com.fluxstore.app"', a_txt)
+              # ضبط minSdkVersion ليكون 21 على الأقل لمتطلبات Firebase Auth
+              a_txt = re.sub(r'minSdkVersion\s*=?\s*(flutter\.minSdkVersion|\d+)', 'minSdkVersion = 21', a_txt)
+              # تفعيل MultiDex
+              if "multiDexEnabled" not in a_txt:
+                  a_txt = a_txt.replace("defaultConfig {", "defaultConfig {\n        multiDexEnabled true", 1)
+              open(app_bg, "w", encoding="utf-8").write(a_txt)
+          print("Firebase google-services wired successfully into Android build!")
+          PY
+
       # ضروري: صلاحية الإنترنت + الشبكة + التخزين + الخلفية (Foreground Service) + الإشعارات + تثبيت APK
       - name: ضبط الـ AndroidManifest
         working-directory: app
@@ -87,7 +132,7 @@ jobs:
                   '        </receiver>\n'
                   '        <provider\n'
                   '            android:name="androidx.core.content.FileProvider"\n'
-                  '            android:authorities="com.fluxstore.flux_store.fileprovider"\n'
+                  '            android:authorities="${applicationId}.fileprovider"\n'
                   '            android:exported="false"\n'
                   '            android:grantUriPermissions="true">\n'
                   '            <meta-data\n'
