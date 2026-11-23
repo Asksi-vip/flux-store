@@ -173,7 +173,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
         return Padding(
           padding: const EdgeInsets.only(bottom: 10),
           child: Dismissible(
-            key: ValueKey<int>('task-${task.game.id}'),
+            key: ValueKey<int>(task.game.id),
             direction: DismissDirection.endToStart,
             background: Container(
               alignment: AlignmentDirectional.centerEnd,
