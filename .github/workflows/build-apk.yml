@@ -87,7 +87,9 @@ jobs:
                   "    </application>",
                   1,
               )
-          s = s.replace('android:label="flux_store"', 'android:label="FLUX GAMES"')
+          import re
+          # اسم التطبيق: أي قيمة label موجودة تُستبدل بـ FLUX GAMES
+          s = re.sub(r'android:label="[^"]*"', 'android:label="FLUX GAMES"', s, count=1)
           open(p, "w", encoding="utf-8").write(s)
           print(s)
           PY
