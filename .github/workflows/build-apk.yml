@@ -137,6 +137,8 @@ jobs:
               import android.content.pm.ServiceInfo
               import android.graphics.Bitmap
               import android.graphics.BitmapFactory
+              import android.net.ConnectivityManager
+              import android.net.NetworkCapabilities
               import android.os.Build
               import android.os.IBinder
               import android.os.PowerManager
@@ -144,13 +146,14 @@ jobs:
               import org.json.JSONObject
               import java.io.File
               import java.io.FileOutputStream
+              import java.io.IOException
               import java.io.InputStream
               import java.net.HttpURLConnection
               import java.net.URL
               import java.util.concurrent.ConcurrentHashMap
 
               /** محددات ملف واحد داخل مهمة التحميل (APK / OBB / Data). */
-              class FluxFileSpec(val url: String, val path: String, val size: Long) {
+              class FluxFileSpec(val url: String, val path: String, @Volatile var size: Long) {
                   @Volatile var bytes: Long = 0
                   @Volatile var done: Boolean = false
               }
@@ -171,7 +174,7 @@ jobs:
 
                   fun totalSize(): Long {
                       var t = 0L
-                      for (s in specs) t += if (s.size > 0) s.size else 0L
+                      for (s in specs) t += if (s.size > 0) s.size else s.bytes
                       return t
                   }
 
@@ -204,11 +207,12 @@ jobs:
                   }
               }
 
-              /** خدمة أمامية للتحميلات — مثل مدير تحميل سوق أبل:
+              /** خدمة أمامية للتحميلات — مثل مدير تحميل Epic Games:
                *  التحميل الفعلي يعمل هنا بمحرك Kotlin الأصلي، فيكمل حتى لو خرج
                *  المستخدم من التطبيق أو أطفأت الشاشة، مع إشعار نظام حقيقي
                *  (أيقونة اللعبة + الاسم + النسبة + شريط تقدم)، واستئناف Range
-               *  من نفس النقطة، وعودة تلقائية عند عودة الشبكة بعد الانقطاع،
+               *  من نفس النقطة بدقة بايت، ومحاولات صامتة مجهرية لمنع انقطاع
+               *  التحميل عند تذبذب الشبكة، ودعم كامل لكافة تحويلات الروابط (HTTP/HTTPS)،
                *  واستكمال المهام المحفوظة بعد قتل العملية وإعادة تشغيلها. */
               class DownloadService : Service() {
 
@@ -237,7 +241,6 @@ jobs:
                               if (gid != 0 && specs.isNotEmpty()) {
                                   startJob(FluxJob(gid, name, icon, specs))
                               } else {
-                                  // مسار dio الاحتياطي: مجرد إشعار أمامي عام
                                   startForegroundIfIdle()
                               }
                           }
@@ -271,7 +274,6 @@ jobs:
                               if (jobs.isEmpty()) stopForegroundIdle()
                           }
                           ACTION_UPDATE -> {
-                              // تحديث نصي احتياطي (مسار dio)
                               val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                               nm.notify(
                                   FOREGROUND_NOTIF_ID,
@@ -287,7 +289,6 @@ jobs:
                               if (jobs.isEmpty()) stopForegroundIdle()
                           }
                           null -> {
-                              // إعادة تشغيل الخدمة من النظام (START_STICKY): نكمل المهام المحفوظة
                               resumePersistedJobs()
                           }
                       }
@@ -308,7 +309,7 @@ jobs:
                       th.start()
                   }
 
-                  /** تحويل نص JSON إلى قائمة ملفات (يأتي من Dart مشفَّرًا بـ jsonEncode). */
+                  /** تحويل نص JSON إلى قائمة ملفات. */
                   private fun parseFiles(json: String): List<FluxFileSpec> {
                       val out = ArrayList<FluxFileSpec>()
                       try {
@@ -325,7 +326,73 @@ jobs:
                       return out
                   }
 
-                  /** حلقة العمل: تحميل الملفات بالتتابع مع بانتظار الشبكة وإعادة المحاولة. */
+                  /** فحص توفر الاتصال بالإنترنت عبر ConnectivityManager */
+                  private fun isNetworkConnected(): Boolean {
+                      return try {
+                          val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                              val network = cm?.activeNetwork ?: return false
+                              val caps = cm.getNetworkCapabilities(network) ?: return false
+                              caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                          } else {
+                              @Suppress("DEPRECATION")
+                              cm?.activeNetworkInfo?.isConnected == true
+                          }
+                      } catch (e: Exception) {
+                          true
+                      }
+                  }
+
+                  /** فتح اتصال HTTP مع إدارة تلقائية للتحويلات (Cross-Protocol HTTP/HTTPS و CDNs) */
+                  private fun openConnectionWithRedirects(initialUrl: String, resumeFrom: Long): HttpURLConnection {
+                      var currentUrl = initialUrl
+                      var hops = 0
+                      val maxHops = 8
+
+                      while (hops < maxHops) {
+                          val url = URL(currentUrl)
+                          val conn = url.openConnection() as HttpURLConnection
+                          conn.connectTimeout = 25000
+                          conn.readTimeout = 40000
+                          conn.instanceFollowRedirects = false
+                          conn.setRequestProperty(
+                              "User-Agent",
+                              "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+                          )
+                          conn.setRequestProperty("Accept", "*/*")
+                          conn.setRequestProperty("Accept-Encoding", "identity")
+                          conn.setRequestProperty("Connection", "keep-alive")
+                          if (resumeFrom > 0) {
+                              conn.setRequestProperty("Range", "bytes=" + resumeFrom + "-")
+                          }
+
+                          conn.connect()
+                          val code = conn.responseCode
+
+                          if (code in arrayOf(
+                                  HttpURLConnection.HTTP_MOVED_PERM,
+                                  HttpURLConnection.HTTP_MOVED_TEMP,
+                                  HttpURLConnection.HTTP_SEE_OTHER,
+                                  307,
+                                  308
+                              )
+                          ) {
+                              val loc = conn.getHeaderField("Location")
+                              conn.disconnect()
+                              if (loc.isNullOrEmpty()) {
+                                  throw IOException("Redirect with empty Location header (code " + code + ")")
+                              }
+                              currentUrl = URL(url, loc).toString()
+                              hops++
+                              continue
+                          }
+
+                          return conn
+                      }
+                      throw IOException("Too many redirects: " + hops)
+                  }
+
+                  /** حلقة العمل: تحميل الملفات بالتتابع مع إعادة محاولة دقيقة وتفادي الانقطاعات. */
                   private fun runJob(job: FluxJob) {
                       try {
                           if (job.iconUrl.isNotEmpty() && icons[job.gameId] == null) {
@@ -346,15 +413,21 @@ jobs:
                               }
                               if (job.cancelled || job.paused) break
                               if (!failed) break // كل الملفات اكتملت
-                              // انقطع الاتصال: بانتظار الشبكة ثم إعادة تلقائية من نفس النقطة
+
+                              // انقطاع تام مستمر بعد استنفاذ جميع المحاولات الصامتة
                               job.state = "waiting"
                               job.speed = 0
                               publishState()
                               updateNotification()
+
+                              // انتظار عودة الشبكة أو مهلة قصيرة قبل محاولة الدورة التالية
                               var waited = 0L
-                              while (waited < 6000L && !job.cancelled && !job.paused) {
-                                  Thread.sleep(400)
-                                  waited += 400
+                              while (waited < 4000L && !job.cancelled && !job.paused) {
+                                  if (waited >= 1000L && isNetworkConnected()) {
+                                      break // عادت الشبكة! استئناف فوري بدون تأخير
+                                  }
+                                  Thread.sleep(500)
+                                  waited += 500
                               }
                           }
                           if (!job.cancelled && !job.paused && job.allDone()) {
@@ -381,56 +454,100 @@ jobs:
                       }
                   }
 
-                  /** تنزيل ملف واحد مع استئناف Range وإعادة تلقائية عبر الحلقة الخارجية. */
+                  /** تنزيل ملف واحد مع استئناف Range ومحاولات صامتة مجهرية (مثل Epic Games). */
                   private fun downloadOne(job: FluxJob, spec: FluxFileSpec): Boolean {
                       try {
                           val f = File(spec.path)
-                          if (f.exists() && spec.size > 0 && f.length() >= spec.size) {
+                          var resumeFrom = if (f.exists()) f.length() else 0L
+                          if (spec.size > 0 && resumeFrom >= spec.size) {
                               spec.bytes = spec.size
                               spec.done = true
                               return true
                           }
-                          var resumeFrom = if (f.exists()) f.length() else 0L
+
+                          var retryCount = 0
+                          val maxRetries = 5
+
                           while (!job.cancelled && !job.paused) {
                               var conn: HttpURLConnection? = null
                               var input: InputStream? = null
                               var out: FileOutputStream? = null
+
                               try {
-                                  conn = URL(spec.url).openConnection() as HttpURLConnection
-                                  conn.connectTimeout = 15000
-                                  conn.readTimeout = 30000
-                                  conn.instanceFollowRedirects = true
-                                  if (resumeFrom > 0) {
-                                      conn.setRequestProperty("Range", "bytes=" + resumeFrom + "-")
-                                  }
-                                  conn.connect()
-                                  val code = conn.responseCode
-                                  if (code == 416) {
-                                      // المدى المطلوب خارج نهاية الملف — الملف مكتمل فعلًا
-                                      spec.bytes = if (spec.size > 0) spec.size else resumeFrom
+                                  resumeFrom = if (f.exists()) f.length() else 0L
+                                  if (spec.size > 0 && resumeFrom >= spec.size) {
+                                      spec.bytes = spec.size
                                       spec.done = true
                                       return true
                                   }
-                                  if (code !in 200..399) return false
+
+                                  conn = openConnectionWithRedirects(spec.url, resumeFrom)
+                                  val code = conn.responseCode
+
+                                  if (code == 416) {
+                                      if (f.exists() && f.length() > 0) {
+                                          spec.bytes = if (spec.size > 0) spec.size else f.length()
+                                          if (spec.size <= 0) spec.size = f.length()
+                                          spec.done = true
+                                          return true
+                                      } else {
+                                          f.delete()
+                                          resumeFrom = 0L
+                                          continue
+                                      }
+                                  }
+
+                                  if (code !in 200..299) {
+                                      throw IOException("HTTP error " + code + " from server")
+                                  }
+
                                   val partial = code == 206 && resumeFrom > 0
                                   val startBytes = if (partial) resumeFrom else 0L
+
+                                  // استخراج الحجم الكلي الحقيقي بدقة من Content-Range أو Content-Length
+                                  val cr = conn.getHeaderField("Content-Range")
+                                  if (!cr.isNullOrEmpty()) {
+                                      val slash = cr.lastIndexOf('/')
+                                      if (slash >= 0 && slash + 1 < cr.length) {
+                                          val total = cr.substring(slash + 1).trim().toLongOrNull()
+                                          if (total != null && total > 0) {
+                                              spec.size = total
+                                          }
+                                      }
+                                  }
+                                  val cl = conn.contentLengthLong
+                                  if (cl > 0) {
+                                      if (partial) {
+                                          if (spec.size <= 0) spec.size = startBytes + cl
+                                      } else {
+                                          spec.size = cl
+                                      }
+                                  }
+
                                   val parent = f.parentFile
                                   if (parent != null && !parent.exists()) parent.mkdirs()
+
                                   out = FileOutputStream(f, partial)
                                   input = conn.inputStream
                                   spec.bytes = startBytes
+
                                   var written = 0L
                                   var lastPublish = 0L
                                   val buf = ByteArray(64 * 1024)
+
                                   while (true) {
                                       val n = input.read(buf)
                                       if (n < 0) break
                                       if (job.cancelled || job.paused) {
-                                          return false // الاحتفاظ بالجزء المنزّل للاستئناف لاحقًا
+                                          return false
                                       }
                                       out.write(buf, 0, n)
                                       written += n
                                       spec.bytes = startBytes + written
+
+                                      // تصفير عداد المحاولات الصامتة عند قراءة بايتات بنجاح
+                                      retryCount = 0
+
                                       job.tick()
                                       val now = System.currentTimeMillis()
                                       if (now - lastPublish >= 500) {
@@ -439,30 +556,40 @@ jobs:
                                           updateNotification()
                                       }
                                   }
+
                                   out.flush()
-                                  if (spec.size > 0 && startBytes + written < spec.size) {
-                                      // الخادم أرسل أقل من الحجم المتوقع — إعادة محاولة لاحقًا
-                                      return false
+
+                                  val finalLength = f.length()
+                                  if (spec.size > 0 && finalLength < spec.size) {
+                                      throw IOException("Premature EOF: read " + finalLength + " of expected " + spec.size)
                                   }
-                                  spec.bytes = startBytes + written
+
+                                  spec.bytes = finalLength
+                                  if (spec.size <= 0) spec.size = finalLength
                                   spec.done = true
                                   return true
+
                               } catch (e: Exception) {
-                                  return false // انقطاع/مهلة — بانتظار الشبكة ثم إعادة
+                                  if (job.cancelled || job.paused) {
+                                      return false
+                                  }
+                                  retryCount++
+                                  if (retryCount <= maxRetries) {
+                                      // محاولة صامتة تلقائية دون الانتقال إلى waiting (مثل Epic Games)
+                                      try {
+                                          Thread.sleep(Math.min(retryCount * 1200L, 4000L))
+                                      } catch (ie: InterruptedException) {
+                                          return false
+                                      }
+                                      continue
+                                  } else {
+                                      // استنفذت كل المحاولات الصامتة
+                                      return false
+                                  }
                               } finally {
-                                  try {
-                                      out?.flush()
-                                      out?.close()
-                                  } catch (e: Exception) {
-                                  }
-                                  try {
-                                      input?.close()
-                                  } catch (e: Exception) {
-                                  }
-                                  try {
-                                      conn?.disconnect()
-                                  } catch (e: Exception) {
-                                  }
+                                  try { out?.flush(); out?.close() } catch (e: Exception) {}
+                                  try { input?.close() } catch (e: Exception) {}
+                                  try { conn?.disconnect() } catch (e: Exception) {}
                               }
                           }
                           return false
@@ -708,7 +835,8 @@ jobs:
                       text: String,
                       percent: Int,
                       large: Bitmap?
-                  ): Notification {                      val b: Notification.Builder = if (Build.VERSION.SDK_INT >= 26) {
+                  ): Notification {
+                      val b: Notification.Builder = if (Build.VERSION.SDK_INT >= 26) {
                           Notification.Builder(this, CHANNEL_ID)
                       } else {
                           @Suppress("DEPRECATION")

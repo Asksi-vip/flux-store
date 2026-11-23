@@ -37,7 +37,7 @@ String formatBytes(int bytes) {
 class FileTask {
   FileTask(this.file, {this.downloaded = 0, this.state = FileTaskState.pending, this.localPath});
 
-  final DownloadFile file;
+  DownloadFile file; // قابل للتحديث عند استخراج روابط جديدة طازجة
   int downloaded; // البايتات المنزلة فعليًا (للاستئناف من نفس النقطة)
   FileTaskState state;
   String? localPath; // المسار المحلي الحقيقي للملف
@@ -73,8 +73,8 @@ class DownloadTask {
     required this.files,
     this.state = DownloadTaskState.paused,
     this.installed = false,
-    this.nativeEngine = false,
-  });
+    bool? nativeEngine,
+  }) : nativeEngine = nativeEngine ?? Platform.isAndroid;
 
   final Game game;
   final List<FileTask> files;
@@ -152,8 +152,14 @@ class DownloadTask {
 class DownloadManager extends ChangeNotifier with WidgetsBindingObserver {
   DownloadManager._() {
     _dio = Dio(BaseOptions(
-      connectTimeout: const Duration(seconds: 15),
-      receiveTimeout: const Duration(seconds: 60),
+      connectTimeout: const Duration(seconds: 25),
+      receiveTimeout: const Duration(seconds: 45),
+      headers: const {
+        'User-Agent':
+            'Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
+        'Accept': '*/*',
+        'Accept-Encoding': 'identity',
+      },
     ));
     _bgChannel.setMethodCallHandler(_handleNativeCall);
     // مراقبة دورة الحياة: عند العودة من نافذة تثبيت أندرويد ننقل OBB/Data تلقائيًا
@@ -214,7 +220,12 @@ class DownloadManager extends ChangeNotifier with WidgetsBindingObserver {
     if (dl == null || !dl.available) return;
     await _ensurePermissions();
 
-    // تحديث روابط صفحات المصدر (ميديافاير/درايف) إذا كانت قديمة —
+    final DownloadTask? existing = _tasks[game.id];
+    if (existing != null && existing.state == DownloadTaskState.completed) {
+      return; // مكتملة سابقًا
+    }
+
+    // تحديث روابط صفحات المصدر (ميديافاير/درايف) إذا كانت قديمة أو منتهية —
     // الخادم يعيد استخراج الرابط المباشر عند القِدم فقط، والفشل يُتجاهل بهدوء
     try {
       final Game? fresh = await ApiService.instance.refreshDownloadLinks(game.id);
@@ -223,21 +234,32 @@ class DownloadManager extends ChangeNotifier with WidgetsBindingObserver {
           fresh.download!.available) {
         game = fresh;
         dl = fresh.download;
+        // إذا كانت المهمة موجودة سابقًا، نحدّث روابط الملفات داخلها فورًا لضمان عدم انتهاء الصلاحية
+        if (existing != null) {
+          for (final freshFile in dl!.files) {
+            for (final ef in existing.files) {
+              if (ef.file.id == freshFile.id || ef.file.type == freshFile.type) {
+                ef.file = freshFile;
+              }
+            }
+          }
+        }
       }
     } catch (_) {}
 
-    final DownloadTask? existing = _tasks[game.id];
-    if (existing != null && existing.state == DownloadTaskState.completed) {
-      return; // مكتملة سابقًا
-    }
     if (existing == null) {
       final List<FileTask> files = <FileTask>[];
       for (final DownloadFile f in dl!.files) {
         files.add(FileTask(f, localPath: await _resolvePath(game, f)));
       }
-      _tasks[game.id] =
-          DownloadTask(game: game, files: files);
+      _tasks[game.id] = DownloadTask(
+        game: game,
+        files: files,
+        nativeEngine: Platform.isAndroid,
+      );
       await _persist();
+    } else {
+      existing.nativeEngine = Platform.isAndroid;
     }
     resume(game.id);
   }
@@ -777,7 +799,7 @@ class DownloadManager extends ChangeNotifier with WidgetsBindingObserver {
               files: files,
               state: st,
               installed: map['installed'] == true,
-              nativeEngine: map['native'] == true,
+              nativeEngine: map['native'] != null ? (map['native'] == true) : Platform.isAndroid,
             );
           } catch (_) {}
         }
@@ -834,12 +856,15 @@ class DownloadManager extends ChangeNotifier with WidgetsBindingObserver {
     unawaited(_postInstallFlow());
   }
 
-  /// تنزيل ملف واحد كاملًا مع دعم الاستئناف (Range) وإعادة المحاولة التلقائية.
+  /// تنزيل ملف واحد كاملًا مع دعم الاستئناف (Range) ومحاولات صامتة مجهرية (مثل Epic Games).
   Future<bool> _downloadFile(DownloadTask t, FileTask ft) async {
     final CancelToken token = CancelToken();
     _tokens[t.game.id] = token;
     ft.state = FileTaskState.downloading;
     notifyListeners();
+
+    int silentRetries = 0;
+    const int maxSilentRetries = 4;
 
     while (true) {
       // مطابقة العداد مع الطول الفعلي للملف على القرص (حقيقة الاستئناف)
@@ -850,7 +875,19 @@ class DownloadManager extends ChangeNotifier with WidgetsBindingObserver {
       } catch (_) {}
 
       final int resumeFrom = ft.downloaded;
-      final Map<String, dynamic> headers = <String, dynamic>{};
+      if (ft.file.size > 0 && resumeFrom >= ft.file.size) {
+        ft.state = FileTaskState.completed;
+        await _persist();
+        notifyListeners();
+        return true;
+      }
+
+      final Map<String, dynamic> headers = <String, dynamic>{
+        'User-Agent':
+            'Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
+        'Accept': '*/*',
+        'Accept-Encoding': 'identity',
+      };
       if (resumeFrom > 0) headers['Range'] = 'bytes=$resumeFrom-';
 
       IOSink? sink;
@@ -861,11 +898,25 @@ class DownloadManager extends ChangeNotifier with WidgetsBindingObserver {
             responseType: ResponseType.stream,
             headers: headers,
             followRedirects: true,
-            validateStatus: (int? s) => s != null && s >= 200 && s < 400,
+            maxRedirects: 8,
+            validateStatus: (int? s) =>
+                s != null && ((s >= 200 && s < 400) || s == 416),
           ),
           cancelToken: token,
         );
         final int status = response.statusCode ?? 0;
+
+        if (status == 416) {
+          // المدى المطلوب خارج نهاية الملف — الملف مكتمل بالفعل
+          final File f = File(ft.localPath ?? '');
+          if (f.existsSync() && f.lengthSync() > 0) {
+            ft.downloaded = f.lengthSync();
+            ft.state = FileTaskState.completed;
+            await _persist();
+            notifyListeners();
+            return true;
+          }
+        }
 
         final File f = File(ft.localPath ?? '');
         if (resumeFrom > 0 && status == 206) {
@@ -886,6 +937,7 @@ class DownloadManager extends ChangeNotifier with WidgetsBindingObserver {
           if (token.isCancelled) break;
           sink.add(chunk);
           ft.downloaded += chunk.length;
+          silentRetries = 0; // تصفير عداد المحاولات عند تدفق البيانات بنجاح
           _updateSpeed(t, ft);
           await sink.flush();
         }
@@ -906,23 +958,38 @@ class DownloadManager extends ChangeNotifier with WidgetsBindingObserver {
           await sink?.flush();
           await sink?.close();
         } catch (_) {}
-        if (e.type == DioExceptionType.cancel) {
+        if (e.type == DioExceptionType.cancel || token.isCancelled) {
           ft.state = FileTaskState.pending;
           return false; // إيقاف يدوي — يحتفظ بالجزء المنزّل
         }
-        return _waitForNetwork(t); // انقطاع/مهلة — عودة تلقائية
+        silentRetries++;
+        if (silentRetries <= maxSilentRetries) {
+          // محاولة صامتة تلقائية دون الانتقال إلى waitingNetwork فورًا (مثل Epic Games)
+          await Future<void>.delayed(Duration(milliseconds: silentRetries * 1200));
+          continue;
+        }
+        return _waitForNetwork(t); // انقطاع حقيقي مستمر بعد استنفاذ المحاولات
       } catch (_) {
         try {
           await sink?.flush();
           await sink?.close();
         } catch (_) {}
+        if (token.isCancelled) {
+          ft.state = FileTaskState.pending;
+          return false;
+        }
+        silentRetries++;
+        if (silentRetries <= maxSilentRetries) {
+          await Future<void>.delayed(Duration(milliseconds: silentRetries * 1200));
+          continue;
+        }
         return _waitForNetwork(t);
       }
     }
   }
 
-  /// انقطع الاتصال: جدولة عودة تلقائية بعد ثوانٍ — وعند عودة النت يكمل من
-  /// نفس النقطة بالضبط (سلوك Epic Games).
+  /// انقطع الاتصال بعد استنفاذ كافة المحاولات الصامتة: جدولة عودة تلقائية بعد ثوانٍ —
+  /// وعند عودة النت يكمل من نفس النقطة بالضبط (سلوك Epic Games).
   Future<bool> _waitForNetwork(DownloadTask t) async {
     final DownloadTask? task = _tasks[t.game.id];
     if (task == null) return false;
@@ -937,7 +1004,7 @@ class DownloadManager extends ChangeNotifier with WidgetsBindingObserver {
     _retryTimers[t.game.id] = Timer(_retryDelay, () {
       final DownloadTask? cur = _tasks[t.game.id];
       if (cur != null && cur.state == DownloadTaskState.waitingNetwork) {
-        _run(t.game.id);
+        resume(t.game.id); // استدعاء resume بدلاً من _run لضمان استخدام المحرك الأصلي أولًا
       }
     });
     return false;
