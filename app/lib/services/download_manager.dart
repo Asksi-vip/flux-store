@@ -72,6 +72,7 @@ class DownloadTask {
     required this.files,
     this.state = DownloadTaskState.paused,
     this.installed = false,
+    this.nativeEngine = false,
   });
 
   final Game game;
@@ -80,6 +81,10 @@ class DownloadTask {
 
   /// هل اللعبة مثبتة فعليًا على الجهاز (بعد تثبيت الـ APK)؟
   bool installed;
+
+  /// التحميل يعمل بمحرك Kotlin الأصلي (خدمة الخلفية) — يكمل حتى بعد
+  /// الخروج من التطبيق، مع إشعار نظام حقيقي بشريط تقدم.
+  bool nativeEngine;
 
   /// جارٍ نقل ملفات OBB/Data تلقائيًا إلى مكانها الصحيح بعد التثبيت.
   bool moving = false;
@@ -126,6 +131,7 @@ class DownloadTask {
         'game': game.toJson(),
         'state': state.name,
         'installed': installed,
+        'native': nativeEngine,
         'files': files.map((FileTask f) => f.toJson()).toList(),
       };
 
@@ -134,9 +140,14 @@ class DownloadTask {
 }
 
 /// مدير التحميلات داخل التطبيق (مثل Epic Games / App Store):
-/// تحميل حقيقي بمقاطع، استئناف من نفس النقطة عبر Range، عودة تلقائية عند
-/// عودة الشبكة بعد الانقطاع، حفظ حالة المهام وإكمالها بعد إعادة فتح التطبيق،
-/// وحفظ ملفات OBB/Data في المسار الصحيح تلقائيًا عند توفر الصلاحية.
+///
+/// على أندرويد يعمل التحميل بمحرك Kotlin أصلي داخل خدمة أمامية (Foreground
+/// Service) — التحميل يكمل بالخلفية حتى لو خرجت من التطبيق أو أطفأت الشاشة،
+/// مع إشعار نظام حقيقي (أيقونة اللعبة + الاسم + النسبة + شريط تقدم) مثل سوق
+/// أبل، ويكمل تلقائيًا عند انقطاع وعودة الشبكة.
+///
+/// التقدم يُشارك بين الخدمة الأصلية والواجهة عبر مزامنة كل ثانية، والحالة
+/// تُحفظ في SharedPreferences وتُستعاد بعد إعادة فتح التطبيق.
 class DownloadManager extends ChangeNotifier with WidgetsBindingObserver {
   DownloadManager._() {
     _dio = Dio(BaseOptions(
@@ -147,11 +158,19 @@ class DownloadManager extends ChangeNotifier with WidgetsBindingObserver {
     try {
       WidgetsBinding.instance.addObserver(this);
     } catch (_) {}
+    // مزامنة دورية مع محرك الخلفية الأصلي (كل ثانية)
+    _syncTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      unawaited(_syncFromNative());
+    });
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _postInstallFlow();
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_postInstallFlow());
+      // عند العودة للتطبيق نزامن فورًا مع محرك الخلفية (لا انتظار للثانية القادمة)
+      unawaited(_syncFromNative());
+    }
   }
 
   static final DownloadManager instance = DownloadManager._();
@@ -159,8 +178,9 @@ class DownloadManager extends ChangeNotifier with WidgetsBindingObserver {
   static const String _kStorage = 'flux_downloads_v1';
   static const Duration _retryDelay = Duration(seconds: 4);
 
-  /// قناة خدمة الخلفية (Foreground Service على أندرويد) — تُبقي التحميل
-  /// شغالًا حتى لو خرجت من التطبيق أو أطفأت الشاشة، مع إشعار تقدم.
+  /// قناة خدمة الخلفية الأصلية (Foreground Service على أندرويد):
+  /// التحميل الفعلي يعمل داخل الخدمة بمحرك Kotlin — يبقى شغالًا حتى لو خرجت
+  /// من التطبيق أو أطفأت الشاشة، مع إشعار تقدم حقيقي في شريط النظام.
   static const MethodChannel _bgChannel = MethodChannel('flux.background');
 
   late final Dio _dio;
@@ -171,6 +191,7 @@ class DownloadManager extends ChangeNotifier with WidgetsBindingObserver {
   final Map<int, int> _lastSpeedBytes = {};
   final Map<int, DateTime> _lastNotify = {};
   final Map<int, DateTime> _lastPersist = {};
+  Timer? _syncTimer;
   bool _restored = false;
 
   /// قائمة المهام (للقراءة).
@@ -214,16 +235,31 @@ class DownloadManager extends ChangeNotifier with WidgetsBindingObserver {
     _cancelToken(gameId);
     _cancelRetry(gameId);
     t.state = DownloadTaskState.paused;
+    t.speed = 0;
     for (final FileTask f in t.files) {
       if (f.state == FileTaskState.downloading) f.state = FileTaskState.pending;
     }
+    if (t.nativeEngine) _nativeCall('pause', {'gameId': gameId});
     _bgStopIfNeeded();
     _persist();
     notifyListeners();
   }
 
   /// استكمال التحميل (من آخر بايت نزل فعليًا عبر Range).
-  void resume(int gameId) => _run(gameId);
+  void resume(int gameId) {
+    final DownloadTask? t = _tasks[gameId];
+    if (t == null || t.state == DownloadTaskState.downloading) return;
+    // محرك الخلفية الأصلي: الخدمة الكوتلين تحمّل وتدير الإشعار بنفسها
+    if (t.nativeEngine && _nativeDispatch(t)) {
+      t.state = DownloadTaskState.downloading;
+      _persist();
+      notifyListeners();
+      return;
+    }
+    // محرك dio الاحتياطي (منصات غير أندرويد أو فشل المحرك الأصلي)
+    t.nativeEngine = false;
+    _run(gameId);
+  }
 
   /// إزالة المهمة مع حذف الملفات الجزئية.
   void remove(int gameId) {
@@ -231,6 +267,7 @@ class DownloadManager extends ChangeNotifier with WidgetsBindingObserver {
     if (t == null) return;
     _cancelToken(gameId);
     _cancelRetry(gameId);
+    if (t.nativeEngine) _nativeCall('cancel', {'gameId': gameId});
     for (final FileTask f in t.files) {
       final String? p = f.localPath;
       if (p != null) {
@@ -246,7 +283,141 @@ class DownloadManager extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  // ---------- خدمة الخلفية: إشعار تقدم + إبقاء العمل مستمرًا ----------
+  // ---------- المحرك الأصلي (خدمة الخلفية الكوتلين) ----------
+
+  /// استدعاء قناة أندرويد مع كتم أي خطأ (منصات غير أندرويد / خدمة غير متاحة).
+  Future<Object?> _nativeCall(String method, Map<String, dynamic> args) async {
+    try {
+      return await _bgChannel.invokeMethod<Object?>(method, args);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// إرسال مهمة التحميل إلى خدمة الخلفية الأصلية — تعيد true عند النجاح.
+  bool _nativeDispatch(DownloadTask t) {
+    unawaited(_nativeDispatchAsync(t));
+    // التحسين: نفترض النجاح على أندرويد؛ إن فشل الإرسال تتحول المهمة
+    // تلقائيًا إلى محرك dio في المزامنة القادمة (_fallbackIfNeeded).
+    return Platform.isAndroid;
+  }
+
+  Future<void> _nativeDispatchAsync(DownloadTask t) async {
+    final List<Map<String, dynamic>> files = <Map<String, dynamic>>[];
+    for (final FileTask f in t.files) {
+      files.add(<String, dynamic>{
+        'url': f.file.url,
+        'path': f.localPath ?? f.file.installPath,
+        'size': f.file.size,
+      });
+    }
+    final Object? ok = await _nativeCall('download', <String, dynamic>{
+      'gameId': t.game.id,
+      'name': t.game.name,
+      'icon': t.game.image,
+      // JSON مُشفَّر هنا في Dart — يقرؤه الكوتلين مباشرة بـ org.json
+      'filesJson': jsonEncode(files),
+    });
+    if (!(ok is bool && ok)) {
+      // الخدمة الأصلية غير متاحة أو رفضت المهمة — نرجع لمحرك dio الاحتياطي
+      final DownloadTask? cur = _tasks[t.game.id];
+      if (cur != null && cur.state == DownloadTaskState.downloading) {
+        cur.nativeEngine = false;
+        _run(t.game.id);
+      }
+    }
+  }
+
+  /// مزامنة التقدم الحقيقي من محرك الخلفية الأصلي إلى مهام الواجهة.
+  ///
+  /// الخدمة الأصلية تكتب حالة كل مهمة (النسبة، السرعة، الحالة) كل ثانية،
+  /// ونحن ندمجها هنا فتبقى الواجهة محدثة حتى لو اكتمل التحميل بالخلفية.
+  Future<void> _syncFromNative() async {
+    if (_tasks.values.every((t) => !t.nativeEngine)) return;
+    final Object? raw = await _nativeCall('getState', const {});
+    if (raw is! String || raw.isEmpty) return;
+    Map<String, dynamic> jobs;
+    try {
+      final dynamic decoded = jsonDecode(raw);
+      if (decoded is Map && decoded['jobs'] is Map) {
+        jobs = Map<String, dynamic>.from(decoded['jobs'] as Map);
+      } else {
+        return;
+      }
+    } catch (_) {
+      return;
+    }
+
+    bool changed = false;
+    for (final DownloadTask t in _tasks.values) {
+      if (!t.nativeEngine) continue;
+      final dynamic entry = jobs[t.game.id.toString()];
+      if (entry == null) continue;
+      final Map<String, dynamic> m =
+          Map<String, dynamic>.from(entry as Map);
+      // المستخدم أوقفها يدويًا — نواياه هي الأهم حتى لو ما زال المحرك يلفّ
+      if (t.state == DownloadTaskState.paused) continue;
+
+      // البايتات لكل ملف
+      final List<dynamic>? fileBytes = m['files'] as List<dynamic>?;
+      if (fileBytes != null) {
+        for (int i = 0; i < t.files.length && i < fileBytes.length; i++) {
+          final int b = (fileBytes[i] as num?)?.toInt() ?? 0;
+          if (t.files[i].downloaded != b) {
+            t.files[i].downloaded = b;
+            changed = true;
+          }
+          if (t.files[i].file.size > 0 && b >= t.files[i].file.size) {
+            if (t.files[i].state != FileTaskState.completed) {
+              t.files[i].state = FileTaskState.completed;
+              changed = true;
+            }
+          }
+        }
+      }
+
+      final String st = m['state']?.toString() ?? '';
+      switch (st) {
+        case 'downloading':
+          if (t.state != DownloadTaskState.downloading) {
+            t.state = DownloadTaskState.downloading;
+            changed = true;
+          }
+          break;
+        case 'waiting':
+          if (t.state != DownloadTaskState.waitingNetwork) {
+            t.state = DownloadTaskState.waitingNetwork;
+            t.speed = 0;
+            changed = true;
+          }
+          break;
+        case 'completed':
+          if (t.state != DownloadTaskState.completed) {
+            t.state = DownloadTaskState.completed;
+            t.speed = 0;
+            changed = true;
+            // مثل Epic: فتح نافذة تثبيت أندرويد تلقائيًا بعد الاكتمال،
+            // ثم نقل OBB/Data (إذا كانت اللعبة مثبتة من تحديث سابق)
+            unawaited(openInstaller(t.game.id));
+            unawaited(_postInstallFlow());
+          }
+          break;
+      }
+
+      final int sp = (m['speed'] as num?)?.toInt() ?? 0;
+      if (sp != t.speed) {
+        t.speed = sp;
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      await _persist();
+      notifyListeners();
+    }
+  }
+
+  // ---------- خدمة الخلفية الاحتياطية (مسار dio) ----------
 
   void _bgStart(DownloadTask t) {
     try {
@@ -469,12 +640,17 @@ class DownloadManager extends ChangeNotifier with WidgetsBindingObserver {
               files: files,
               state: st,
               installed: map['installed'] == true,
+              nativeEngine: map['native'] == true,
             );
           } catch (_) {}
         }
       }
     } catch (_) {}
     notifyListeners();
+
+    // مزامنة فورية مع محرك الخلفية الأصلي: ربما اكتمل التحميل والتطبيق مغلق
+    await _syncFromNative();
+
     // مثل Epic: ما كان في انتظار الشبكة يُستكمل تلقائيًا عند فتح التطبيق
     for (final DownloadTask t in tasks) {
       if (t.waiting) resume(t.game.id);
@@ -493,14 +669,14 @@ class DownloadManager extends ChangeNotifier with WidgetsBindingObserver {
     } catch (_) {}
   }
 
-  // ---------- المحرك: تنزيل فعلي بمقاطع مع استئناف ----------
+  // ---------- المحرك الاحتياطي: تنزيل فعلي بمقاطع مع استئناف ----------
 
   Future<void> _run(int gameId) async {
     final DownloadTask? t = _tasks[gameId];
     if (t == null) return;
     if (t.state == DownloadTaskState.downloading) return;
     t.state = DownloadTaskState.downloading;
-    // تشغيل خدمة الخلفية: التحميل يكمل حتى بعد الخروج من التطبيق أو إطفاء الشاشة
+    // تشغيل خدمة الخلفية الاحتياطية: إشعار تقدم + إبقاء العمل مستمرًا
     _bgStart(t);
     notifyListeners();
 
@@ -784,6 +960,7 @@ class DownloadManager extends ChangeNotifier with WidgetsBindingObserver {
     for (final Timer timer in _retryTimers.values) {
       timer.cancel();
     }
+    _syncTimer?.cancel();
     super.dispose();
   }
 }

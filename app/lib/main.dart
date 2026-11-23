@@ -1,19 +1,28 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
-import 'screens/splash_screen.dart';
+import 'controllers/library_controller.dart';
+import 'screens/main_shell.dart';
 import 'services/download_manager.dart';
+import 'services/library_service.dart';
 import 'theme/app_theme.dart';
 
 /// نقطة انطلاق تطبيق Flux — متجر ألعاب بأسلوب Epic Games.
+/// الدخول مباشرة إلى الصفحة الرئيسية دون شاشة افتتاحية.
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   // استعادة التنزيلات المحفوظة واستكمالها تلقائيًا بعد إعادة فتح التطبيق (مثل Epic)
-  DownloadManager.instance.restore();
-  runApp(const FluxApp());
+  unawaited(DownloadManager.instance.restore());
+  runApp(
+    FluxApp(controller: LibraryController(LibraryService())),
+  );
 }
 
 class FluxApp extends StatelessWidget {
-  const FluxApp({super.key});
+  const FluxApp({super.key, required this.controller});
+
+  final LibraryController controller;
 
   @override
   Widget build(BuildContext context) {
@@ -26,7 +35,7 @@ class FluxApp extends StatelessWidget {
         textDirection: TextDirection.rtl,
         child: child!,
       ),
-      home: const SplashScreen(),
+      home: MainShell(controller: controller),
     );
   }
 }

@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:dio/dio.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config.dart';
 import '../models/game.dart';
@@ -13,6 +16,10 @@ class ApiException implements Exception {
 }
 
 /// خدمة الاتصال بـ API متجر Flux (حزمة dio).
+///
+/// كل البيانات تُحفظ في SharedPreferences: عند نجاح الطلب تُحدَّث نسخة الكاش،
+/// وعند فشل الاتصال تُعاد البيانات المحفوظة فورًا (مع تطبيق البحث والفلاتر
+/// محليًا) — فلا يعيد التطبيق تحميل كل شيء من الصفر في كل مرة.
 class ApiService {
   ApiService._internal() {
     _dio = Dio(
@@ -32,29 +39,148 @@ class ApiService {
 
   late final Dio _dio;
 
+  // ---------- مفاتيح الكاش المحلي (SharedPreferences) ----------
+
+  /// الكاش الكامل لقائمة الألعاب (يسدّ كل طلبات getGames)
+  static const String _kGamesCache = 'flux_cache_games_v1';
+
+  /// الكاش الكامل لقائمة المميزة (البانر المتحرك)
+  static const String _kFeaturedCache = 'flux_cache_featured_v1';
+
+  /// وقت آخر تحديث ناجح للكاش
+  static const String _kCacheStamp = 'flux_cache_stamp_v1';
+
+  /// بادئة كاش تفاصيل كل لعبة: flux_cache_game_<المعرف>
+  static const String _kGamePrefix = 'flux_cache_game_';
+
+  /// الرسالة الموحدة عند انقطاع الإنترنت — بدل رسائل الخادم التقنية القديمة.
+  static const String offlineMessage = 'فشل الاتصال بالإنترنت';
+
   /// تحويل أخطاء dio إلى رسائل عربية مفهومة للمستخدم.
   String _friendlyError(DioException e) {
     switch (e.type) {
       case DioExceptionType.connectionTimeout:
       case DioExceptionType.sendTimeout:
       case DioExceptionType.receiveTimeout:
-        return 'انتهت مهلة الاتصال بالخادم، تحقق من الإنترنت وحاول مجددًا';
       case DioExceptionType.connectionError:
-        return 'تعذر الوصول إلى الخادم — تأكد من تشغيل الـ API ومن صحة العنوان في lib/config.dart';
+        // رسالة واضحة وموحدة عند انقطاع الشبكة (بدون تفاصيل الخادم)
+        return offlineMessage;
       case DioExceptionType.badResponse:
         final code = e.response?.statusCode ?? 0;
         if (code == 404) return 'العنصر المطلوب غير موجود';
         if (code >= 500) return 'خطأ في الخادم، حاول بعد قليل';
         return 'فشل الطلب (رمز $code)';
       default:
-        return 'حدث خطأ غير متوقع، حاول مجددًا';
+        return offlineMessage;
     }
   }
 
+  // ---------- الكاش: حفظ واسترجاع ----------
+
+  /// حفظ قائمة الألعاب في الكاش المحلي بعد نجاح الجلب.
+  Future<void> _cacheGames(List<Game> games) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final List<Map<String, dynamic>> plain = games
+          .map((Game g) => g.toJson())
+          .toList();
+      await prefs.setString(_kGamesCache, jsonEncode(plain));
+      await prefs.setString(
+        _kCacheStamp,
+        DateTime.now().millisecondsSinceEpoch.toString(),
+      );
+    } catch (_) {
+      // فشل الكاش لا يفسد النتيجة
+    }
+  }
+
+  /// قراءة قائمة الألعاب المحفوظة محليًا (أو قائمة فارغة).
+  Future<List<Game>> cachedGames() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final String? raw = prefs.getString(_kGamesCache);
+      if (raw == null || raw.isEmpty) return const [];
+      final List<dynamic> list = jsonDecode(raw) as List<dynamic>;
+      return list
+          .map((dynamic e) =>
+              Game.fromJson(Map<String, dynamic>.from(e as Map)))
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// حفظ تفاصيل لعبة واحدة في الكاش.
+  Future<void> _cacheGame(Game game) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_kGamePrefix + game.id.toString(),
+          jsonEncode(game.toJson()));
+    } catch (_) {}
+  }
+
+  /// قراءة تفاصيل لعبة محفوظة محليًا (أو null).
+  Future<Game?> cachedGame(int id) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final String? raw = prefs.getString(_kGamePrefix + id.toString());
+      if (raw == null || raw.isEmpty) return null;
+      return Game.fromJson(
+          Map<String, dynamic>.from(jsonDecode(raw) as Map));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// آخر وقت تحديث ناجح للكاش (أو null إذا لم يوجد كاش).
+  Future<DateTime?> cacheStamp() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final String? raw = prefs.getString(_kCacheStamp);
+      if (raw == null) return null;
+      return DateTime.fromMillisecondsSinceEpoch(int.parse(raw));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// تطبيق فلاتر البحث والفئة والسعر محليًا على قائمة ألعاب الكاش —
+  /// يُستخدم عند انقطاع الشبكة حتى تعمل كل الصفحات من البيانات المحفوظة.
+  List<Game> _filterLocally(
+    List<Game> games, {
+    String? search,
+    String? category,
+    double? minPrice,
+    double? maxPrice,
+    bool? featured,
+  }) {
+    Iterable<Game> out = games;
+    if (search != null && search.isNotEmpty) {
+      final String q = search.toLowerCase();
+      out = out.where((Game g) => g.name.toLowerCase().contains(q));
+    }
+    if (category != null && category.isNotEmpty) {
+      out = out.where((Game g) => g.category == category);
+    }
+    if (minPrice != null) {
+      out = out.where((Game g) => g.finalPrice >= minPrice);
+    }
+    if (maxPrice != null) {
+      out = out.where((Game g) => g.finalPrice <= maxPrice);
+    }
+    if (featured == true) {
+      out = out.where((Game g) => g.isFeatured);
+    }
+    return out.toList();
+  }
+
+  // ---------- الطلبات مع الكاش ----------
+
   /// جلب قائمة الألعاب مع دعم البحث والفلترة والترتيب.
   ///
-  /// [search] بحث بالاسم، [category] تصنيف، [minPrice]/[maxPrice] نطاق السعر،
-  /// [featured] المميزة فقط، [page] رقم الصفحة.
+  /// نجح الاتصال: تُحدَّث نسخة الكاش وتُعاد النتائج الطازجة.
+  /// فشل الاتصال: تُعاد بيانات الكاش مع تطبيق نفس الفلاتر محليًا،
+  /// وإن لم يوجد كاش أصلًا يُرمى استثناء برسالة [offlineMessage].
   Future<List<Game>> getGames({
     String? search,
     String? category,
@@ -80,28 +206,90 @@ class ApiService {
       // استجابة تقسيم الصفحات تحتوي results، والاستجابة غير المقسمة قائمة مباشرة
       final List items =
           (data is Map && data['results'] is List) ? data['results'] : (data as List? ?? []);
-      return items.map((e) => Game.fromJson(e as Map<String, dynamic>)).toList();
+      final List<Game> games =
+          items.map((e) => Game.fromJson(e as Map<String, dynamic>)).toList();
+      await _cacheGames(games);
+      return games;
     } on DioException catch (e) {
+      // انقطاع الشبكة: نرجع بيانات الكاش المحفوظة مع نفس الفلاتر
+      final List<Game> cached = await cachedGames();
+      if (cached.isNotEmpty) {
+        return _filterLocally(
+          cached,
+          search: search,
+          category: category,
+          minPrice: minPrice,
+          maxPrice: maxPrice,
+          featured: featured,
+        );
+      }
       throw ApiException(_friendlyError(e));
     } catch (_) {
-      throw ApiException('تعذر تحليل بيانات الألعاب، حاول مجددًا');
+      final List<Game> cached = await cachedGames();
+      if (cached.isNotEmpty) {
+        return _filterLocally(
+          cached,
+          search: search,
+          category: category,
+          minPrice: minPrice,
+          maxPrice: maxPrice,
+          featured: featured,
+        );
+      }
+      throw ApiException(offlineMessage);
     }
   }
 
-  /// جلب تفاصيل لعبة واحدة حسب المعرف.
+  /// جلب تفاصيل لعبة واحدة حسب المعرف (شبكة ← كاش عند الفشل).
   Future<Game> getGame(int id) async {
     try {
       final response = await _dio.get('/games/$id/');
-      return Game.fromJson(response.data as Map<String, dynamic>);
-    } on DioException catch (e) {
-      throw ApiException(_friendlyError(e));
+      final Game game =
+          Game.fromJson(response.data as Map<String, dynamic>);
+      await _cacheGame(game);
+      return game;
+    } on DioException {
+      final Game? cached = await cachedGame(id);
+      if (cached != null) return cached;
+      throw ApiException(offlineMessage);
     } catch (_) {
-      throw ApiException('تعذر تحميل تفاصيل اللعبة');
+      final Game? cached = await cachedGame(id);
+      if (cached != null) return cached;
+      throw ApiException(offlineMessage);
     }
   }
 
-  /// جلب الألعاب المميزة (للبانر المتحرك).
-  Future<List<Game>> getFeatured() => getGames(featured: true);
+  /// جلب الألعاب المميزة (للبانر المتحرك) — من الشبكة أو من الكاش المخصص.
+  Future<List<Game>> getFeatured() async {
+    try {
+      final response = await _dio.get(
+        '/games/',
+        queryParameters: <String, dynamic>{'featured': 'true', 'page_size': 50},
+      );
+      final data = response.data;
+      final List items =
+          (data is Map && data['results'] is List) ? data['results'] : (data as List? ?? []);
+      final List<Game> games =
+          items.map((e) => Game.fromJson(e as Map<String, dynamic>)).toList();
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(
+          _kFeaturedCache,
+          jsonEncode(games.map((Game g) => g.toJson()).toList()),
+        );
+      } catch (_) {}
+      return games;
+    } on DioException {
+      final List<Game> cached = await cachedGames();
+      final List<Game> featured =
+          cached.where((Game g) => g.isFeatured).toList();
+      if (featured.isNotEmpty) return featured;
+      if (cached.isNotEmpty) return cached.take(5).toList();
+      throw ApiException(offlineMessage);
+    } catch (_) {
+      throw ApiException(offlineMessage);
+    }
+  }
 
   /// فحص حالة الخادم (تُستخدم في شاشة الملف الشخصي).
   Future<bool> isServerOnline() async {

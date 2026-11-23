@@ -36,7 +36,7 @@ jobs:
         working-directory: app
         run: flutter create . --platforms android --org com.fluxstore
 
-      # ضروري: صلاحية الإنترنت + التخزين + الخلفية (Foreground Service) + الإشعارات + تثبيت APK
+      # ضروري: صلاحية الإنترنت + الشبكة + التخزين + الخلفية (Foreground Service) + الإشعارات + تثبيت APK
       - name: ضبط الـ AndroidManifest
         working-directory: app
         run: |
@@ -45,6 +45,7 @@ jobs:
           s = open(p, encoding="utf-8").read()
           perms = {
               "android.permission.INTERNET": '<uses-permission android:name="android.permission.INTERNET"/>\n    ',
+              "android.permission.ACCESS_NETWORK_STATE": '<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    ',
               "android.permission.WRITE_EXTERNAL_STORAGE": '<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>\n    ',
               "android.permission.MANAGE_EXTERNAL_STORAGE": '<uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>\n    ',
               "android.permission.FOREGROUND_SERVICE": '<uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>\n    ',
@@ -100,8 +101,11 @@ jobs:
           cp -r ci-assets/launcher/. app/android/app/src/main/res/
           ls app/android/app/src/main/res/mipmap-xxxhdpi/
 
-      # خدمة الخلفية (إشعار تقدم + WakeLock) + مثبّت الـ APK عبر FileProvider
-      - name: حقن خدمة التحميل بالخلفية ومثبّت الـ APK (Kotlin)
+      # خدمة التحميل الأصلية: تحميل فعلي داخل الخدمة الأمامية (يكمل بالخلفية
+      # حتى بعد الخروج من التطبيق أو إطفاء الشاشة) + إشعار نظام حقيقي بشريط
+      # تقدم وأيقونة اللعبة مثل سوق أبل + استئناف Range + عودة تلقائية بعد
+      # انقطاع الشبكة + استكمال المهام بعد قتل العملية (START_STICKY).
+      - name: حقن محرك التحميل الأصلي ومثبّت الـ APK (Kotlin)
         working-directory: app
         run: |
           python3 - <<'PY'
@@ -117,72 +121,566 @@ jobs:
               import android.app.Notification
               import android.app.NotificationChannel
               import android.app.NotificationManager
+              import android.app.PendingIntent
               import android.app.Service
               import android.content.Context
               import android.content.Intent
+              import android.content.pm.ServiceInfo
+              import android.graphics.Bitmap
+              import android.graphics.BitmapFactory
               import android.os.Build
               import android.os.IBinder
               import android.os.PowerManager
+              import org.json.JSONArray
+              import org.json.JSONObject
+              import java.io.File
+              import java.io.FileOutputStream
+              import java.io.InputStream
+              import java.net.HttpURLConnection
+              import java.net.URL
+              import java.util.concurrent.ConcurrentHashMap
 
-              /** خدمة أمامية للتحميلات: إشعار تقدم + WakeLock — التحميل يكمل بالخلفية مثل Epic Games. */
+              /** محددات ملف واحد داخل مهمة التحميل (APK / OBB / Data). */
+              class FluxFileSpec(val url: String, val path: String, val size: Long) {
+                  @Volatile var bytes: Long = 0
+                  @Volatile var done: Boolean = false
+              }
+
+              /** مهمة تحميل لعبة كاملة تعمل داخل الخدمة الأمامية بذاكرة خلفية Kotlin. */
+              class FluxJob(
+                  val gameId: Int,
+                  val name: String,
+                  val iconUrl: String,
+                  val specs: List<FluxFileSpec>
+              ) {
+                  @Volatile var paused: Boolean = false
+                  @Volatile var cancelled: Boolean = false
+                  @Volatile var state: String = "downloading" // downloading | waiting | completed
+                  @Volatile var speed: Long = 0
+                  private var lastSpeedBytes: Long = 0
+                  private var lastSpeedTick: Long = 0
+
+                  fun totalSize(): Long {
+                      var t = 0L
+                      for (s in specs) t += if (s.size > 0) s.size else 0L
+                      return t
+                  }
+
+                  fun downloaded(): Long {
+                      var d = 0L
+                      for (s in specs) d += s.bytes
+                      return d
+                  }
+
+                  fun allDone(): Boolean {
+                      for (s in specs) if (!s.done) return false
+                      return true
+                  }
+
+                  /** قياس السرعة كل نصف ثانية. */
+                  fun tick() {
+                      val now = System.currentTimeMillis()
+                      if (lastSpeedTick == 0L) {
+                          lastSpeedTick = now
+                          lastSpeedBytes = downloaded()
+                          return
+                      }
+                      val dt = now - lastSpeedTick
+                      if (dt >= 500) {
+                          val delta = downloaded() - lastSpeedBytes
+                          speed = if (dt > 0 && delta > 0) delta * 1000 / dt else 0L
+                          lastSpeedBytes = downloaded()
+                          lastSpeedTick = now
+                      }
+                  }
+              }
+
+              /** خدمة أمامية للتحميلات — مثل مدير تحميل سوق أبل:
+               *  التحميل الفعلي يعمل هنا بمحرك Kotlin الأصلي، فيكمل حتى لو خرج
+               *  المستخدم من التطبيق أو أطفأت الشاشة، مع إشعار نظام حقيقي
+               *  (أيقونة اللعبة + الاسم + النسبة + شريط تقدم)، واستئناف Range
+               *  من نفس النقطة، وعودة تلقائية عند عودة الشبكة بعد الانقطاع،
+               *  واستكمال المهام المحفوظة بعد قتل العملية وإعادة تشغيلها. */
               class DownloadService : Service() {
 
+                  private val jobs = ConcurrentHashMap<Int, FluxJob>()
+                  private val threads = ConcurrentHashMap<Int, Thread>()
+                  private val icons = ConcurrentHashMap<Int, Bitmap?>()
+                  private val recentCompleted = ConcurrentHashMap<Int, JSONObject>()
                   private var wakeLock: PowerManager.WakeLock? = null
+                  private var foregroundActive = false
 
                   override fun onBind(intent: Intent?): IBinder? = null
+
+                  override fun onCreate() {
+                      super.onCreate()
+                      ensureChannel()
+                  }
 
                   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
                       when (intent?.action) {
                           ACTION_START -> {
-                              ensureChannel()
-                              startForeground(
-                                  NOTIF_ID,
-                                  buildNotification(
-                                      intent.getStringExtra("title") ?: "تحميل لعبة",
-                                      "",
-                                      null
-                                  )
-                              )
-                              acquireWakeLock()
+                              val gid = intent.getIntExtra("gameId", 0)
+                              val name = intent.getStringExtra("name") ?: "تحميل لعبة"
+                              val icon = intent.getStringExtra("icon") ?: ""
+                              val filesJson = intent.getStringExtra("files") ?: "[]"
+                              val specs = parseFiles(filesJson)
+                              if (gid != 0 && specs.isNotEmpty()) {
+                                  startJob(FluxJob(gid, name, icon, specs))
+                              } else {
+                                  // مسار dio الاحتياطي: مجرد إشعار أمامي عام
+                                  startForegroundIfIdle()
+                              }
+                          }
+                          ACTION_PAUSE -> {
+                              val gid = intent.getIntExtra("gameId", 0)
+                              val job = jobs[gid]
+                              if (job != null) {
+                                  job.paused = true
+                                  jobs.remove(gid)
+                                  persistJobs()
+                                  publishState()
+                              }
+                              if (jobs.isEmpty()) stopForegroundIdle()
+                          }
+                          ACTION_CANCEL -> {
+                              val gid = intent.getIntExtra("gameId", 0)
+                              val job = jobs[gid]
+                              if (job != null) {
+                                  job.cancelled = true
+                                  jobs.remove(gid)
+                              }
+                              recentCompleted.remove(gid)
+                              threads.remove(gid)
+                              persistJobs()
+                              publishState()
+                              try {
+                                  val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                                  nm.cancel(COMPLETED_BASE + (gid % 80000))
+                              } catch (e: Exception) {
+                              }
+                              if (jobs.isEmpty()) stopForegroundIdle()
                           }
                           ACTION_UPDATE -> {
+                              // تحديث نصي احتياطي (مسار dio)
                               val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                               nm.notify(
-                                  NOTIF_ID,
+                                  FOREGROUND_NOTIF_ID,
                                   buildNotification(
                                       intent.getStringExtra("title") ?: "تحميل لعبة",
                                       intent.getStringExtra("progress") ?: "",
+                                      -1,
                                       null
                                   )
                               )
                           }
                           ACTION_STOP -> {
-                              releaseWakeLock()
-                              stopForeground(true)
-                              stopSelf()
+                              if (jobs.isEmpty()) stopForegroundIdle()
+                          }
+                          null -> {
+                              // إعادة تشغيل الخدمة من النظام (START_STICKY): نكمل المهام المحفوظة
+                              resumePersistedJobs()
                           }
                       }
                       return START_STICKY
                   }
 
-                  private fun buildNotification(title: String, progressText: String, progress: Float?): Notification {
-                      val style = if (Build.VERSION.SDK_INT >= 26) {
+                  /** بدء/إعادة بدء مهمة تحميل داخل الخدمة. */
+                  private fun startJob(job: FluxJob) {
+                      val existing = jobs[job.gameId]
+                      if (existing != null) existing.cancelled = true
+                      recentCompleted.remove(job.gameId)
+                      jobs[job.gameId] = job
+                      persistJobs()
+                      startForegroundIfIdle()
+                      acquireWakeLock()
+                      val th = Thread { runJob(job) }
+                      threads[job.gameId] = th
+                      th.start()
+                  }
+
+                  /** حلقة العمل: تحميل الملفات بالتتابع مع بانتظار الشبكة وإعادة المحاولة. */
+                  private fun runJob(job: FluxJob) {
+                      try {
+                          if (job.iconUrl.isNotEmpty() && icons[job.gameId] == null) {
+                              icons[job.gameId] = fetchBitmap(job.iconUrl)
+                              updateNotification()
+                          }
+                          while (!job.cancelled && !job.paused) {
+                              var failed = false
+                              for (spec in job.specs) {
+                                  if (job.cancelled || job.paused) break
+                                  if (spec.done) continue
+                                  job.state = "downloading"
+                                  updateNotification()
+                                  if (!downloadOne(job, spec)) {
+                                      failed = !spec.done
+                                      break
+                                  }
+                              }
+                              if (job.cancelled || job.paused) break
+                              if (!failed) break // كل الملفات اكتملت
+                              // انقطع الاتصال: بانتظار الشبكة ثم إعادة تلقائية من نفس النقطة
+                              job.state = "waiting"
+                              job.speed = 0
+                              publishState()
+                              updateNotification()
+                              var waited = 0L
+                              while (waited < 6000L && !job.cancelled && !job.paused) {
+                                  Thread.sleep(400)
+                                  waited += 400
+                              }
+                          }
+                          if (!job.cancelled && !job.paused && job.allDone()) {
+                              job.state = "completed"
+                              for (s in job.specs) {
+                                  if (s.size > 0) s.bytes = s.size
+                                  s.done = true
+                              }
+                              recentCompleted[job.gameId] = snapshot(job)
+                              jobs.remove(job.gameId)
+                              publishState()
+                              persistJobs()
+                              notifyCompleted(job)
+                              updateNotification()
+                          }
+                      } catch (e: Exception) {
+                          try {
+                              job.state = "waiting"
+                              publishState()
+                          } catch (e2: Exception) {
+                          }
+                      } finally {
+                          threads.remove(job.gameId)
+                      }
+                  }
+
+                  /** تنزيل ملف واحد مع استئناف Range وإعادة تلقائية عبر الحلقة الخارجية. */
+                  private fun downloadOne(job: FluxJob, spec: FluxFileSpec): Boolean {
+                      try {
+                          val f = File(spec.path)
+                          if (f.exists() && spec.size > 0 && f.length() >= spec.size) {
+                              spec.bytes = spec.size
+                              spec.done = true
+                              return true
+                          }
+                          var resumeFrom = if (f.exists()) f.length() else 0L
+                          while (!job.cancelled && !job.paused) {
+                              var conn: HttpURLConnection? = null
+                              var input: InputStream? = null
+                              var out: FileOutputStream? = null
+                              try {
+                                  conn = URL(spec.url).openConnection() as HttpURLConnection
+                                  conn.connectTimeout = 15000
+                                  conn.readTimeout = 30000
+                                  conn.instanceFollowRedirects = true
+                                  if (resumeFrom > 0) {
+                                      conn.setRequestProperty("Range", "bytes=" + resumeFrom + "-")
+                                  }
+                                  conn.connect()
+                                  val code = conn.responseCode
+                                  if (code == 416) {
+                                      // المدى المطلوب خارج نهاية الملف — الملف مكتمل فعلًا
+                                      spec.bytes = if (spec.size > 0) spec.size else resumeFrom
+                                      spec.done = true
+                                      return true
+                                  }
+                                  if (code !in 200..399) return false
+                                  val partial = code == 206 && resumeFrom > 0
+                                  val startBytes = if (partial) resumeFrom else 0L
+                                  val parent = f.parentFile
+                                  if (parent != null && !parent.exists()) parent.mkdirs()
+                                  out = FileOutputStream(f, partial)
+                                  input = conn.inputStream
+                                  spec.bytes = startBytes
+                                  var written = 0L
+                                  var lastPublish = 0L
+                                  val buf = ByteArray(64 * 1024)
+                                  while (true) {
+                                      val n = input.read(buf)
+                                      if (n < 0) break
+                                      if (job.cancelled || job.paused) {
+                                          return false // الاحتفاظ بالجزء المنزّل للاستئناف لاحقًا
+                                      }
+                                      out.write(buf, 0, n)
+                                      written += n
+                                      spec.bytes = startBytes + written
+                                      job.tick()
+                                      val now = System.currentTimeMillis()
+                                      if (now - lastPublish >= 500) {
+                                          lastPublish = now
+                                          publishState()
+                                          updateNotification()
+                                      }
+                                  }
+                                  out.flush()
+                                  if (spec.size > 0 && startBytes + written < spec.size) {
+                                      // الخادم أرسل أقل من الحجم المتوقع — إعادة محاولة لاحقًا
+                                      return false
+                                  }
+                                  spec.bytes = startBytes + written
+                                  spec.done = true
+                                  return true
+                              } catch (e: Exception) {
+                                  return false // انقطاع/مهلة — بانتظار الشبكة ثم إعادة
+                              } finally {
+                                  try {
+                                      out?.flush()
+                                      out?.close()
+                                  } catch (e: Exception) {
+                                  }
+                                  try {
+                                      input?.close()
+                                  } catch (e: Exception) {
+                                  }
+                                  try {
+                                      conn?.disconnect()
+                                  } catch (e: Exception) {
+                                  }
+                              }
+                          }
+                          return false
+                      } catch (e: Exception) {
+                          return false
+                      }
+                  }
+
+                  // ---------- الحالة المشتركة مع واجهة Flutter ----------
+
+                  /** لقطة JSON لحالة مهمة (يقرؤها Dart عبر getState كل ثانية). */
+                  private fun snapshot(job: FluxJob): JSONObject {
+                      val o = JSONObject()
+                      o.put("bytes", job.downloaded())
+                      o.put("total", job.totalSize())
+                      o.put("speed", job.speed)
+                      o.put("state", job.state)
+                      val arr = JSONArray()
+                      for (s in job.specs) arr.put(s.bytes)
+                      o.put("files", arr)
+                      return o
+                  }
+
+                  /** نشر حالة كل المهام (الجارية + المكتملة حديثًا) للقراءة من Dart. */
+                  private fun publishState() {
+                      try {
+                          val jobsObj = JSONObject()
+                          for ((gid, job) in jobs) {
+                              jobsObj.put(gid.toString(), snapshot(job))
+                          }
+                          for ((gid, snap) in recentCompleted) {
+                              if (!jobsObj.has(gid.toString())) {
+                                  jobsObj.put(gid.toString(), snap)
+                              }
+                          }
+                          val root = JSONObject()
+                          root.put("jobs", jobsObj)
+                          stateJson = root.toString()
+                      } catch (e: Exception) {
+                      }
+                  }
+
+                  /** حفظ المهام الجارية حتى تُستكمل تلقائيًا بعد قتل العملية. */
+                  private fun persistJobs() {
+                      try {
+                          val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                          val obj = JSONObject()
+                          for ((gid, job) in jobs) {
+                              val o = JSONObject()
+                              o.put("name", job.name)
+                              o.put("icon", job.iconUrl)
+                              val arr = JSONArray()
+                              for (s in job.specs) {
+                                  val fo = JSONObject()
+                                  fo.put("url", s.url)
+                                  fo.put("path", s.path)
+                                  fo.put("size", s.size)
+                                  arr.put(fo)
+                              }
+                              o.put("files", arr)
+                              obj.put(gid.toString(), o)
+                          }
+                          prefs.edit().putString("jobs", obj.toString()).apply()
+                      } catch (e: Exception) {
+                      }
+                  }
+
+                  /** استكمال المهام المحفوظة بعد إعادة تشغيل العملية (START_STICKY). */
+                  private fun resumePersistedJobs() {
+                      try {
+                          val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                          val raw = prefs.getString("jobs", null) ?: return
+                          val obj = JSONObject(raw)
+                          val keys = obj.keys()
+                          while (keys.hasNext()) {
+                              val gidStr = keys.next()
+                              val gid = gidStr.toIntOrNull() ?: continue
+                              if (jobs.containsKey(gid)) continue
+                              val o = obj.getJSONObject(gidStr)
+                              val specs = parseFiles(o.getJSONArray("files").toString())
+                              if (specs.isEmpty()) continue
+                              startJob(
+                                  FluxJob(
+                                      gid,
+                                      o.optString("name", "تحميل لعبة"),
+                                      o.optString("icon", ""),
+                                      specs
+                                  )
+                              )
+                          }
+                      } catch (e: Exception) {
+                      }
+                  }
+
+                  // ---------- الإشعار الأمامي (نمط سوق أبل) ----------
+
+                  private fun startForegroundIfIdle() {
+                      ensureChannel()
+                      foregroundActive = true
+                      val notif = buildNotification(
+                          aggregateTitle(),
+                          aggregateText(),
+                          aggregatePercent(),
+                          aggregateIcon()
+                      )
+                      try {
+                          if (Build.VERSION.SDK_INT >= 29) {
+                              startForeground(
+                                  FOREGROUND_NOTIF_ID,
+                                  notif,
+                                  ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                              )
+                          } else {
+                              startForeground(FOREGROUND_NOTIF_ID, notif)
+                          }
+                      } catch (e: Exception) {
+                          try {
+                              startForeground(FOREGROUND_NOTIF_ID, notif)
+                          } catch (e2: Exception) {
+                          }
+                      }
+                  }
+
+                  private fun updateNotification() {
+                      if (!foregroundActive) {
+                          if (jobs.isNotEmpty()) startForegroundIfIdle()
+                          return
+                      }
+                      try {
+                          val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                          nm.notify(
+                              FOREGROUND_NOTIF_ID,
+                              buildNotification(
+                                  aggregateTitle(),
+                                  aggregateText(),
+                                  aggregatePercent(),
+                                  aggregateIcon()
+                              )
+                          )
+                      } catch (e: Exception) {
+                      }
+                  }
+
+                  private fun stopForegroundIdle() {
+                      foregroundActive = false
+                      try {
+                          if (Build.VERSION.SDK_INT >= 24) {
+                              stopForeground(Service.STOP_FOREGROUND_REMOVE)
+                          } else {
+                              @Suppress("DEPRECATION")
+                              stopForeground(true)
+                          }
+                      } catch (e: Exception) {
+                      }
+                      releaseWakeLock()
+                      stopSelf()
+                  }
+
+                  private fun aggregateTitle(): String {
+                      if (jobs.isEmpty()) return "تحميل لعبة"
+                      val active = jobs.values.firstOrNull()
+                      return if (jobs.size == 1) {
+                          "تحميل ${active?.name ?: ""}"
+                      } else {
+                          "تحميل ${jobs.size} ألعاب"
+                      }
+                  }
+
+                  private fun aggregateText(): String {
+                      var waitingOnly = true
+                      var speedSum = 0L
+                      for (job in jobs.values) {
+                          if (job.state == "downloading") waitingOnly = false
+                          speedSum += job.speed
+                      }
+                      if (waitingOnly && jobs.isNotEmpty()) {
+                          return "بانتظار الشبكة — سيستكمل تلقائيًا"
+                      }
+                      val (d, t) = aggregateBytes()
+                      val pct = if (t > 0) (d * 100 / t).toInt() else 0
+                      return "" + pct + "%" + (if (speedSum > 0) " — " + fmtBytes(speedSum) + "/ث" else "")
+                  }
+
+                  private fun aggregatePercent(): Int {
+                      if (jobs.isEmpty()) return -1
+                      var waitingOnly = true
+                      for (job in jobs.values) {
+                          if (job.state == "downloading") waitingOnly = false
+                      }
+                      if (waitingOnly) return -1
+                      val (d, t) = aggregateBytes()
+                      return if (t > 0) (d * 100 / t).toInt() else -1
+                  }
+
+                  private fun aggregateIcon(): Bitmap? {
+                      if (jobs.isEmpty()) return null
+                      val first = jobs.values.firstOrNull() ?: return null
+                      return icons[first.gameId]
+                  }
+
+                  private fun notifyCompleted(job: FluxJob) {
+                      try {
+                          val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                          val b: Notification.Builder = if (Build.VERSION.SDK_INT >= 26) {
+                              Notification.Builder(this, CHANNEL_ID)
+                          } else {
+                              @Suppress("DEPRECATION")
+                              Notification.Builder(this)
+                          }
+                          b.setSmallIcon(android.R.drawable.stat_sys_download_done)
+                              .setContentTitle("اكتمل تحميل ${job.name} ✓")
+                              .setContentText("جاهزة للتثبيت — اضغط لفتح FLUX GAMES")
+                              .setContentIntent(openAppIntent())
+                              .setAutoCancel(true)
+                          nm.notify(COMPLETED_BASE + (job.gameId % 80000), b.build())
+                      } catch (e: Exception) {
+                      }
+                  }
+
+                  private fun buildNotification(
+                      title: String,
+                      text: String,
+                      percent: Int,
+                      large: Bitmap?
+                  ): Notification {
+                      val b: Notification.Builder = if (Build.VERSION.SDK_INT >= 26) {
                           Notification.Builder(this, CHANNEL_ID)
                       } else {
                           @Suppress("DEPRECATION")
                           Notification.Builder(this)
                       }
-                      style.setContentTitle(title)
-                          .setSmallIcon(android.R.drawable.stat_sys_download)
+                      b.setContentTitle(title)
+                          .setSmallIcon(R.mipmap.ic_launcher)
                           .setOngoing(true)
                           .setOnlyAlertOnce(true)
-                      if (progressText != "") style.setContentText(progressText)
-                      if (progress != null && progress > 0) {
-                          style.setProgress(100, (progress * 100).toInt(), false)
+                          .setContentIntent(openAppIntent())
+                      if (text.isNotEmpty()) b.setContentText(text)
+                      if (large != null) b.setLargeIcon(large)
+                      if (percent >= 0) {
+                          b.setProgress(100, percent, false)
                       } else {
-                          style.setProgress(0, 0, true)
+                          b.setProgress(0, 0, true)
                       }
-                      return style.build()
+                      return b.build()
                   }
 
                   private fun ensureChannel() {
@@ -198,22 +696,70 @@ jobs:
                       }
                   }
 
+                  /** الضغط على الإشعار يفتح التطبيق (مثل سوق أبل). */
+                  private fun openAppIntent(): PendingIntent {
+                      val launch = packageManager.getLaunchIntentForPackage(packageName)
+                      val intent = launch ?: Intent()
+                      intent.addFlags(
+                          Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                      )
+                      return PendingIntent.getActivity(
+                          this,
+                          0,
+                          intent,
+                          PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                      )
+                  }
+
                   private fun acquireWakeLock() {
                       try {
                           if (wakeLock?.isHeld == true) return
                           val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
                           wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "flux:downloads")
                           wakeLock?.acquire(4 * 60 * 60 * 1000L)
-                      } catch (_: Exception) {
+                      } catch (e: Exception) {
                       }
                   }
 
                   private fun releaseWakeLock() {
                       try {
                           wakeLock?.let { if (it.isHeld) it.release() }
-                      } catch (_: Exception) {
+                      } catch (e: Exception) {
                       }
                       wakeLock = null
+                  }
+
+                  private fun fetchBitmap(urlStr: String): Bitmap? {
+                      return try {
+                          val conn = URL(urlStr).openConnection() as HttpURLConnection
+                          conn.connectTimeout = 8000
+                          conn.readTimeout = 8000
+                          conn.doInput = true
+                          conn.connect()
+                          if (conn.responseCode in 200..399) {
+                              BitmapFactory.decodeStream(conn.inputStream)
+                          } else {
+                              null
+                          }
+                      } catch (e: Exception) {
+                          null
+                      }
+                  }
+
+                  private fun fmtBytes(b: Long): String {
+                      if (b <= 0) return "0 B"
+                      val units = arrayOf("B", "KB", "MB", "GB")
+                      var v = b.toDouble()
+                      var i = 0
+                      while (v >= 1024 && i < units.size - 1) {
+                          v /= 1024
+                          i++
+                      }
+                      return if (i == 0 || v >= 100) {
+                          String.format(java.util.Locale.US, "%.0f %s", v, units[i])
+                      } else {
+                          String.format(java.util.Locale.US, "%.1f %s", v, units[i])
+                      }
                   }
 
                   override fun onDestroy() {
@@ -223,10 +769,22 @@ jobs:
 
                   companion object {
                       const val CHANNEL_ID = "flux_downloads"
-                      const val NOTIF_ID = 42
+                      const val PREFS_NAME = "flux_native_jobs"
+                      const val FOREGROUND_NOTIF_ID = 42
+                      const val COMPLETED_BASE = 100000
                       const val ACTION_START = "flux.action.START"
                       const val ACTION_UPDATE = "flux.action.UPDATE"
                       const val ACTION_STOP = "flux.action.STOP"
+                      const val ACTION_PAUSE = "flux.action.PAUSE"
+                      const val ACTION_CANCEL = "flux.action.CANCEL"
+
+                      /** حالة المهام المشتركة — يقرؤها Dart عبر قناة flux.background. */
+                      @Volatile
+                      var stateJson: String? = null
+                  }
+
+                  init {
+                      publishState()
                   }
               }
               ''').strip() + "\n"
@@ -247,8 +805,9 @@ jobs:
               import io.flutter.plugin.common.MethodChannel
               import java.io.File
 
-              /** MainActivity مع قناة flux.background: خدمة الخلفية + تثبيت الـ APK
-               *  + كشف تثبيت اللعبة وتشغيلها + إشعار الجاهزية بعد نقل الملفات. */
+              /** MainActivity مع قناة flux.background: محرك التحميل الأصلي (خدمة
+               *  الخلفية) + قراءة حالة التقدم + تثبيت الـ APK + كشف تثبيت اللعبة
+               *  وتشغيلها + إشعار الجاهزية بعد نقل الملفات. */
               class MainActivity : FlutterActivity() {
 
                   override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -257,7 +816,34 @@ jobs:
                           .setMethodCallHandler { call, result ->
                               val intent = Intent(this, DownloadService::class.java)
                               when (call.method) {
+                                  "download" -> {
+                                      // إرسال مهمة تحميل كاملة إلى محرك الخلفية الأصلي
+                                      intent.action = DownloadService.ACTION_START
+                                      intent.putExtra("gameId", call.argument<Int>("gameId") ?: 0)
+                                      intent.putExtra("name", call.argument<String>("name") ?: "تحميل لعبة")
+                                      intent.putExtra("icon", call.argument<String>("icon") ?: "")
+                                      // JSON مُشفَّر من Dart — يُحلَّل في الخدمة بـ org.json
+                                      intent.putExtra("files", call.argument<String>("filesJson") ?: "[]")
+                                      ContextCompat.startForegroundService(this, intent)
+                                      result.success(true)
+                                  }
+                                  "pause" -> {
+                                      intent.action = DownloadService.ACTION_PAUSE
+                                      intent.putExtra("gameId", call.argument<Int>("gameId") ?: 0)
+                                      startService(intent)
+                                      result.success(null)
+                                  }
+                                  "cancel" -> {
+                                      intent.action = DownloadService.ACTION_CANCEL
+                                      intent.putExtra("gameId", call.argument<Int>("gameId") ?: 0)
+                                      startService(intent)
+                                      result.success(null)
+                                  }
+                                  "getState" -> {
+                                      result.success(DownloadService.stateJson ?: "")
+                                  }
                                   "start" -> {
+                                      // مسار dio الاحتياطي: إشعار أمامي عام
                                       intent.action = DownloadService.ACTION_START
                                       intent.putExtra("title", call.argument<String>("title") ?: "تحميل لعبة")
                                       ContextCompat.startForegroundService(this, intent)

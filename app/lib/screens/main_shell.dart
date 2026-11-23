@@ -24,6 +24,20 @@ class MainShell extends StatefulWidget {
 
 class _MainShellState extends State<MainShell> {
   int _index = 0;
+  FocusNode _downloadsSearchFocus = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    // تحميل المكتبة المحفوظة محليًا (كانت تُحمّل في شاشة الافتتاح سابقًا)
+    widget.controller.load();
+  }
+
+  @override
+  void dispose() {
+    _downloadsSearchFocus.dispose();
+    super.dispose();
+  }
 
   // تبويبان فقط مثل طلب المستخدم: المتجر + التنزيلات
   // (البحث والحساب عبر أزرار الترويسة، والمكتبة عبر رابط داخل التنزيلات)
@@ -110,7 +124,14 @@ class _MainShellState extends State<MainShell> {
         ),
         actions: [
           IconButton(
-            onPressed: _openSearch,
+            // في تبويب التنزيلات: البحث يفلتر التنزيلات المحملة داخل القسم نفسه
+            onPressed: () {
+              if (_index == 1) {
+                _downloadsSearchFocus.requestFocus();
+              } else {
+                _openSearch();
+              }
+            },
             icon: const Icon(Icons.search_rounded, size: 22),
             tooltip: 'البحث',
           ),
@@ -125,7 +146,11 @@ class _MainShellState extends State<MainShell> {
         index: _index,
         children: [
           HomeScreen(controller: widget.controller, onOpenGame: _openGame),
-          DownloadsScreen(controller: widget.controller),
+          DownloadsScreen(
+            controller: widget.controller,
+            onOpenGame: _openGame,
+            searchFocus: _downloadsSearchFocus,
+          ),
         ],
       ),
       bottomNavigationBar: ListenableBuilder(

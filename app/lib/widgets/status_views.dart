@@ -78,21 +78,11 @@ class ErrorView extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             const Text(
-              'تعذر تحميل البيانات',
+              'فشل الاتصال بالإنترنت',
               style: TextStyle(
                 color: EpicColors.textPrimary,
                 fontSize: 17,
                 fontWeight: FontWeight.w800,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: EpicColors.textSecondary,
-                fontSize: 13,
-                height: 1.6,
               ),
             ),
             const SizedBox(height: 20),
