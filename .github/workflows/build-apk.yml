@@ -72,8 +72,9 @@ jobs:
                   a_txt += "\napply plugin: 'com.google.gms.google-services'\n"
               # ضبط applicationId على com.fluxstore.app ليتطابق مع Firebase
               a_txt = re.sub(r'applicationId\s*=?\s*["\'][^"\']+["\']', 'applicationId = "com.fluxstore.app"', a_txt)
-              # ضبط minSdkVersion ليكون 21 على الأقل لمتطلبات Firebase Auth
-              a_txt = re.sub(r'minSdkVersion\s*=?\s*(flutter\.minSdkVersion|\d+)', 'minSdkVersion = 21', a_txt)
+              # ضبط minSdkVersion ليكون 23 على الأقل لمتطلبات Firebase Auth
+              a_txt = re.sub(r'minSdkVersion\s*=?\s*([^\n\r]+)', 'minSdkVersion = 23', a_txt)
+              a_txt = re.sub(r'minSdkVersion\s+\d+', 'minSdkVersion 23', a_txt)
               # تفعيل MultiDex
               if "multiDexEnabled" not in a_txt:
                   a_txt = a_txt.replace("defaultConfig {", "defaultConfig {\n        multiDexEnabled true", 1)
@@ -88,6 +89,10 @@ jobs:
           python3 - <<'PY'
           p = "android/app/src/main/AndroidManifest.xml"
           s = open(p, encoding="utf-8").read()
+          if "xmlns:tools=" not in s:
+              s = s.replace("<manifest", '<manifest\n    xmlns:tools="http://schemas.android.com/tools"', 1)
+          if "<uses-sdk" not in s:
+              s = s.replace("<application", '<uses-sdk tools:overrideLibrary="com.google.firebase.auth"/>\n    <application', 1)
           perms = {
               "android.permission.INTERNET": '<uses-permission android:name="android.permission.INTERNET"/>\n    ',
               "android.permission.ACCESS_NETWORK_STATE": '<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    ',
