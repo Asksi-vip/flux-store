@@ -6,7 +6,7 @@
 
 require_once __DIR__ . '/config.php';
 
-/** تصنيفات الألعاب المدعومة (القيمة ← الاسم المعروض كما في التطبيق). */
+/** تصنيفات الألعاب الافتراضية عند أول تشغيل (القيمة ← الاسم المعروض كما في التطبيق). */
 function flux_categories()
 {
     return array(
@@ -19,6 +19,94 @@ function flux_categories()
         'strategy'  => 'استراتيجية',
         'sandbox'   => 'عالم مفتوح',
     );
+}
+
+/** إنشاء جداول التصنيفات + تعبئة الافتراضية عند أول تشغيل (تصنيفات قابلة للإضافة والحذف). */
+function flux_ensure_categories(PDO $pdo)
+{
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS categories (
+            id   INTEGER PRIMARY KEY AUTOINCREMENT,
+            slug TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            sort INTEGER NOT NULL DEFAULT 0
+        )
+    ");
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS game_categories (
+            game_id     INTEGER NOT NULL,
+            category_id INTEGER NOT NULL,
+            PRIMARY KEY (game_id, category_id)
+        )
+    ");
+    $count = (int) $pdo->query('SELECT COUNT(*) FROM categories')->fetchColumn();
+    if ($count === 0) {
+        $ins = $pdo->prepare('INSERT INTO categories (slug, name, sort) VALUES (:slug, :name, :sort)');
+        $i = 0;
+        foreach (flux_categories() as $slug => $name) {
+            $ins->execute(array(':slug' => $slug, ':name' => $name, ':sort' => $i++));
+        }
+    }
+}
+
+/** كل التصنيفات الحالية من القاعدة مرتبة (id, slug, name, sort). */
+function flux_categories_rows(PDO $pdo)
+{
+    return $pdo->query('SELECT * FROM categories ORDER BY sort ASC, id ASC')->fetchAll();
+}
+
+/** تصنيفات كل لعبة من المجموعة دفعة واحدة → [game_id ← [slug, slug, ...]]. */
+function flux_game_category_slugs(PDO $pdo, array $ids)
+{
+    $ids = array_values(array_filter(array_map('intval', $ids)));
+    if (empty($ids)) {
+        return array();
+    }
+    $marks = array();
+    $params = array();
+    foreach ($ids as $i => $v) {
+        $marks[] = ':g' . $i;
+        $params[':g' . $i] = $v;
+    }
+    $stmt = $pdo->prepare(
+        'SELECT gc.game_id, c.slug FROM game_categories gc
+         JOIN categories c ON c.id = gc.category_id
+         WHERE gc.game_id IN (' . implode(',', $marks) . ')
+         ORDER BY c.sort ASC, c.id ASC'
+    );
+    $stmt->execute($params);
+    $map = array();
+    foreach ($stmt->fetchAll() as $row) {
+        $map[(int) $row['game_id']][] = $row['slug'];
+    }
+    return $map;
+}
+
+/** حفظ تصنيفات لعبة واحدة (قائمة slugs) — تحل القديمة بالكامل، والأساسي يُخزن بأول واحدة. */
+function flux_set_game_categories(PDO $pdo, $gameId, array $slugs)
+{
+    $pdo->prepare('DELETE FROM game_categories WHERE game_id = :gid')->execute(array(':gid' => (int) $gameId));
+    $slugs = array_values(array_filter(array_map('trim', $slugs)));
+    if (empty($slugs)) {
+        return;
+    }
+    $ins = $pdo->prepare('INSERT OR IGNORE INTO game_categories (game_id, category_id) SELECT :gid, id FROM categories WHERE slug = :slug');
+    foreach ($slugs as $slug) {
+        $ins->execute(array(':gid' => (int) $gameId, ':slug' => $slug));
+    }
+}
+
+/** إن لم تحددها اللعبة من جدول التصنيفات بعد، نصل القديم بالجديد (ترحيل تلقائي مرة واحدة). */
+function flux_migrate_legacy_categories(PDO $pdo)
+{
+    $n = (int) $pdo->query('SELECT COUNT(*) FROM game_categories')->fetchColumn();
+    if ($n > 0) {
+        return;
+    }
+    $ins = $pdo->prepare('INSERT OR IGNORE INTO game_categories (game_id, category_id) SELECT :gid, id FROM categories WHERE slug = :slug');
+    foreach ($pdo->query('SELECT id, category FROM games')->fetchAll() as $g) {
+        $ins->execute(array(':gid' => (int) $g['id'], ':slug' => (string) $g['category']));
+    }
 }
 
 /** اتصال PDO بقاعدة SQLite + إنشاء الجدول + تعبئة البيانات التجريبية عند أول تشغيل. */
@@ -58,6 +146,10 @@ function flux_db()
     // ترقية قواعد بيانات النسخ القديمة: أعمدة التحميل + أعمدة مستخرج الرابط المباشر
     flux_migrate($pdo);
 
+    // التصنيفات الديناميكية (إضافة/تعديل/حذف من اللوحة) + الربط المتعدد للألعاب
+    flux_ensure_categories($pdo);
+    flux_migrate_legacy_categories($pdo);
+
     // ملفات التحميل لكل لعبة (APK أساسي + ملفات إضافية OBB/Data مع المسار المحسوب)
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS game_files (
@@ -77,6 +169,7 @@ function flux_db()
     $count = (int) $pdo->query('SELECT COUNT(*) FROM games')->fetchColumn();
     if ($count === 0) {
         flux_seed_games($pdo);
+        flux_migrate_legacy_categories($pdo);
     }
 
     $fileCount = (int) $pdo->query('SELECT COUNT(*) FROM game_files')->fetchColumn();
@@ -98,6 +191,9 @@ function flux_migrate(PDO $pdo)
         'package_name'          => "ALTER TABLE games ADD COLUMN package_name TEXT NOT NULL DEFAULT ''",
         'download_version'      => "ALTER TABLE games ADD COLUMN download_version TEXT NOT NULL DEFAULT ''",
         'download_version_code' => 'ALTER TABLE games ADD COLUMN download_version_code INTEGER NOT NULL DEFAULT 0',
+        // حقول بنمط سوق أبِل: المطور وتاريخ آخر تحديث للعبة
+        'developer'             => "ALTER TABLE games ADD COLUMN developer TEXT NOT NULL DEFAULT ''",
+        'last_updated'          => "ALTER TABLE games ADD COLUMN last_updated TEXT NOT NULL DEFAULT ''",
     );
     foreach ($extra as $col => $sql) {
         if (!in_array($col, $names, true)) {
@@ -198,16 +294,31 @@ function flux_package_from_url(array $urls)
 /** تحويل قيمة ميغابايت (نص) إلى بايتات — صفر عند الفارغة أو غير الصالحة. */
 function flux_mb_to_bytes($mb)
 {
-    $v = (float) (($mb === '' || $mb === null) ? 0 : $mb);
+    return flux_size_to_bytes($mb, 'MB');
+}
+
+/** تحويل حجم بقيمة ووحدة (KB/MB/GB) إلى بايتات — من نموذج اللوحة. */
+function flux_size_to_bytes($value, $unit)
+{
+    $v = (float) (($value === '' || $value === null) ? 0 : $value);
     if ($v <= 0) {
         return 0;
     }
-    return (int) round($v * 1024 * 1024);
+    switch (strtoupper((string) $unit)) {
+        case 'KB':
+            return (int) round($v * 1024);
+        case 'GB':
+            return (int) round($v * 1024 * 1024 * 1024);
+        case 'MB':
+        default:
+            return (int) round($v * 1024 * 1024);
+    }
 }
 
 /**
  * جمع ملفات التحميل من نموذج اللعبة مباشرة:
- * APK أساسي + OBB + صفوف Data متعددة (data_url[] / data_size_mb[]) → مصفوفة جاهزة للإدراج.
+ * APK أساسي + OBB + صفوف Data متعددة (data_url[] / data_size[] + وحدات KB/MB/GB) → مصفوفة جاهزة للإدراج.
+ * الحجم يُخزن بالبايتات دائمًا — الوحدة تأتي من حقل اختيار موازٍ لكل صف.
  */
 function flux_collect_files_input($post)
 {
@@ -219,7 +330,7 @@ function flux_collect_files_input($post)
             'name'         => 'ملف تثبيت اللعبة APK',
             'url'          => $apkUrl,
             'type'         => 'apk',
-            'size'         => flux_mb_to_bytes(isset($post['apk_size_mb']) ? $post['apk_size_mb'] : ''),
+            'size'         => flux_size_to_bytes(isset($post['apk_size']) ? $post['apk_size'] : '', isset($post['apk_size_unit']) ? $post['apk_size_unit'] : 'MB'),
             'version_code' => 0,
         );
     }
@@ -230,13 +341,16 @@ function flux_collect_files_input($post)
             'name'         => 'ملف البيانات الرئيسي OBB',
             'url'          => $obbUrl,
             'type'         => 'obb',
-            'size'         => flux_mb_to_bytes(isset($post['obb_size_mb']) ? $post['obb_size_mb'] : ''),
+            'size'         => flux_size_to_bytes(isset($post['obb_size']) ? $post['obb_size'] : '', isset($post['obb_size_unit']) ? $post['obb_size_unit'] : 'MB'),
             'version_code' => (int) (isset($post['obb_version_code']) && $post['obb_version_code'] !== '' ? $post['obb_version_code'] : 0),
         );
     }
 
     $dataUrls  = (isset($post['data_url']) && is_array($post['data_url'])) ? $post['data_url'] : array();
-    $dataSizes = (isset($post['data_size_mb']) && is_array($post['data_size_mb'])) ? $post['data_size_mb'] : array();
+    $dataSizes = (isset($post['data_size']) && is_array($post['data_size'])) ? $post['data_size'] : array();
+    $dataUnits = (isset($post['data_size_unit']) && is_array($post['data_size_unit'])) ? $post['data_size_unit'] : array();
+    // توافق مع النسخة السابقة (data_size_mb بالميغابايت)
+    $dataSizesMb = (isset($post['data_size_mb']) && is_array($post['data_size_mb'])) ? $post['data_size_mb'] : array();
     $n = 0;
     foreach ($dataUrls as $i => $u) {
         $u = trim((string) $u);
@@ -244,11 +358,13 @@ function flux_collect_files_input($post)
             continue;
         }
         $n++;
+        $val = isset($dataSizes[$i]) ? $dataSizes[$i] : (isset($dataSizesMb[$i]) ? $dataSizesMb[$i] : '');
+        $unit = isset($dataSizes[$i]) && $dataSizes[$i] !== '' ? (isset($dataUnits[$i]) ? $dataUnits[$i] : 'MB') : 'MB';
         $files[] = array(
             'name'         => 'ملفات إضافية Data ' . $n,
             'url'          => $u,
             'type'         => 'data',
-            'size'         => flux_mb_to_bytes(isset($dataSizes[$i]) ? $dataSizes[$i] : ''),
+            'size'         => flux_size_to_bytes($val, $unit),
             'version_code' => 0,
         );
     }
@@ -378,8 +494,9 @@ function flux_seed_games(PDO $pdo)
     }
 }
 
-/** تحويل صف من قاعدة البيانات إلى صيغة JSON المتوافقة مع تطبيق Flutter حرفيًا (+ ملفات التحميل). */
-function flux_serialize_game(array $g, array $files = array())
+/** تحويل صف من قاعدة البيانات إلى صيغة JSON المتوافقة مع تطبيق Flutter حرفيًا (+ ملفات التحميل).
+ *  $catSlugs تصنيفات اللعبة المتعددة (slug) — تحسب تلقائيًا من القاعدة عند تركها فارغة. */
+function flux_serialize_game(array $g, array $files = array(), array $catSlugs = null)
 {
     $price    = (float) $g['price'];
     $discount = ($g['discount_price'] === null) ? null : (float) $g['discount_price'];
@@ -387,6 +504,11 @@ function flux_serialize_game(array $g, array $files = array())
     $final    = $has ? $discount : $price;
     $cats     = flux_categories();
     $cat      = $g['category'];
+    $catSlugs = ($catSlugs === null || empty($catSlugs)) ? array($cat) : $catSlugs;
+    $catNames = array();
+    foreach ($catSlugs as $slug) {
+        $catNames[] = isset($cats[$slug]) ? $cats[$slug] : $slug;
+    }
 
     // كائن التحميل: الملف الرئيسي هو أول ملف APK، والبقية OBB/Data بمسارات محسوبة تلقائيًا
     $dlFiles = array();
@@ -418,12 +540,17 @@ function flux_serialize_game(array $g, array $files = array())
         'discount_price'   => $discount,
         'final_price'      => round($final, 2),
         'has_discount'     => $has,
-        'category'         => $cat,
-        'category_display' => isset($cats[$cat]) ? $cats[$cat] : $cat,
+        'category'         => $catSlugs[0],
+        'category_display' => $catNames[0],
+        // التصنيفات المتعددة بنمط سوق أبِل: قائمة كاملة بالأسماء والمعرفات
+        'categories'       => $catSlugs,
+        'categories_display' => $catNames,
         'rating'           => (float) $g['rating'],
         'image'            => $g['image_url'],
         'banner'           => $g['banner_url'],
         'release_date'     => $g['release_date'],
+        'developer'        => isset($g['developer']) ? $g['developer'] : '',
+        'last_updated'     => isset($g['last_updated']) ? $g['last_updated'] : '',
         'is_featured'      => (bool) $g['is_featured'],
         'created_at'       => $g['created_at'],
         'package_name'     => isset($g['package_name']) ? $g['package_name'] : '',
@@ -491,10 +618,10 @@ function flux_games_list(PDO $pdo)
         $bind[':s2']   = $like;
     }
 
-    // 2) الفئة (من القائمة البيضاء فقط)
+    // 2) التصنيف: يقبل أي تصنيف من تصنيفات اللعبة المتعددة (+ التوافق مع العمود القديم)
     $category = trim((string) (isset($q['category']) ? $q['category'] : ''));
-    if ($category !== '' && array_key_exists($category, flux_categories())) {
-        $where[]      = 'category = :cat';
+    if ($category !== '') {
+        $where[] = "(category = :cat OR id IN (SELECT gc.game_id FROM game_categories gc JOIN categories c ON c.id = gc.category_id WHERE c.slug = :cat))";
         $bind[':cat'] = $category;
     }
 
@@ -549,17 +676,18 @@ function flux_games_list(PDO $pdo)
     $stmt->execute($bind);
     $rows = $stmt->fetchAll();
 
-    // جلب ملفات التحميل لكل ألعاب الصفحة دفعة واحدة
+    // جلب ملفات التحميل والتصنيفات لكل ألعاب الصفحة دفعة واحدة
     $ids = array();
     foreach ($rows as $r) {
         $ids[] = (int) $r['id'];
     }
     $filesMap = flux_files_for_games($pdo, $ids);
+    $catsMap  = flux_game_category_slugs($pdo, $ids);
 
     $results = array();
     foreach ($rows as $r) {
         $gid = (int) $r['id'];
-        $results[] = flux_serialize_game($r, isset($filesMap[$gid]) ? $filesMap[$gid] : array());
+        $results[] = flux_serialize_game($r, isset($filesMap[$gid]) ? $filesMap[$gid] : array(), isset($catsMap[$gid]) ? $catsMap[$gid] : array());
     }
 
     return array(
@@ -610,6 +738,12 @@ function flux_collect_game_input(array $post)
         $release = '2024-01-01';
     }
 
+    // تاريخ آخر تحديث (نمط سوق أبِل) — افتراضيًا تاريخ الإصدار
+    $lastUpdated = trim((string) (isset($post['last_updated']) ? $post['last_updated'] : ''));
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $lastUpdated)) {
+        $lastUpdated = $release;
+    }
+
     return array(
         'name'                  => $name,
         'description'           => (string) (isset($post['description']) ? $post['description'] : ''),
@@ -620,6 +754,8 @@ function flux_collect_game_input(array $post)
         'image_url'             => trim((string) (isset($post['image_url']) ? $post['image_url'] : '')),
         'banner_url'            => trim((string) (isset($post['banner_url']) ? $post['banner_url'] : '')),
         'release_date'          => $release,
+        'developer'             => trim((string) (isset($post['developer']) ? $post['developer'] : '')),
+        'last_updated'          => $lastUpdated,
         'is_featured'           => !empty($post['is_featured']) ? 1 : 0,
         'package_name'          => trim((string) (isset($post['package_name']) ? $post['package_name'] : '')),
         'download_version'      => trim((string) (isset($post['download_version']) ? $post['download_version'] : '')),

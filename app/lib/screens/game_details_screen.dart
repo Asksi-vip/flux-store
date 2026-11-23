@@ -158,15 +158,21 @@ class _GameDetailsScreenState extends State<GameDetailsScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      game.categoryDisplay,
-                      style: const TextStyle(
-                        color: EpicColors.cyan,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
+                    // التصنيفات المتعددة (أو الأساسية احتياطيًا)
+                    _categoriesChips(),
                     const SizedBox(height: 8),
+                    if (game.developer.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Text(
+                          game.developer,
+                          style: const TextStyle(
+                            color: EpicColors.textSecondary,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
                     Text(
                       game.name,
                       style: const TextStyle(
@@ -268,6 +274,31 @@ class _GameDetailsScreenState extends State<GameDetailsScreen> {
                         ),
                       ),
                     const SizedBox(height: 20),
+                    // بطاقة معلومات بنمط سوق أبِل: المطور، التواريخ، الحجم، الإصدار، الحزمة
+                    if (_hasInfoRows()) ...[
+                      const Text(
+                        'معلومات',
+                        style: TextStyle(
+                          color: EpicColors.textPrimary,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(horizontal: 14),
+                        decoration: BoxDecoration(
+                          color: EpicColors.surface,
+                          border: Border.all(color: EpicColors.border),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Column(
+                          children: _infoRows(),
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                    ],
                     // معلومات التحميل: الإصدار، الحجم، وملفات OBB/Data بمساراتها التلقائية
                     if (game.download != null && game.download!.available) ...[
                       const Text(
@@ -516,5 +547,119 @@ class _GameDetailsScreenState extends State<GameDetailsScreen> {
         child: Icon(icon, size: 20, color: EpicColors.textPrimary),
       ),
     );
+  }
+
+  // ---------- شرائح التصنيفات وبطاقة المعلومات (نمط سوق أبِل) ----------
+
+  /// شرائح التصنيفات المتعددة — احتياطيًا التصنيف الأساسي.
+  Widget _categoriesChips() {
+    final List<String> names = game.categoriesDisplay.isNotEmpty
+        ? game.categoriesDisplay
+        : (game.categoryDisplay.isNotEmpty ? <String>[game.categoryDisplay] : <String>[]);
+    if (names.isEmpty) return const SizedBox.shrink();
+    return Wrap(
+      spacing: 8,
+      runSpacing: 6,
+      children: names
+          .map(
+            (String n) => Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: EpicColors.cyan.withOpacity(.12),
+                border: Border.all(color: EpicColors.cyan.withOpacity(.6)),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                n,
+                style: const TextStyle(
+                  color: EpicColors.cyan,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          )
+          .toList(),
+    );
+  }
+
+  /// هل توجد صفوف معلومات كافية للعرض؟
+  bool _hasInfoRows() =>
+      game.developer.isNotEmpty ||
+      game.releaseDate.isNotEmpty ||
+      game.lastUpdated.isNotEmpty ||
+      game.packageName.isNotEmpty ||
+      (game.download?.version.isNotEmpty ?? false);
+
+  /// صف بطاقة المعلومات.
+  static Widget _infoRow(String label, String value, {bool last = false}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: last
+              ? BorderSide.none
+              : BorderSide(color: EpicColors.border.withOpacity(.6)),
+        ),
+      ),
+      child: Row(
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              color: EpicColors.textSecondary,
+              fontSize: 12.5,
+            ),
+          ),
+          const Spacer(),
+          Flexible(
+            child: Text(
+              value,
+              textAlign: TextAlign.end,
+              style: const TextStyle(
+                color: EpicColors.textPrimary,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// صفوف بطاقة المعلومات (تظهر فقط للحقول المعبأة).
+  List<Widget> _infoRows() {
+    final List<MapEntry<String, String>> items = <MapEntry<String, String>>[];
+    void add(String label, String value) {
+      if (value.isEmpty) return;
+      items.add(MapEntry<String, String>(label, value));
+    }
+
+    add('المطوّر', game.developer);
+    add('تاريخ الإصدار', _fmtDate(game.releaseDate));
+    add('آخر تحديث', _fmtDate(game.lastUpdated));
+    if (game.download != null && game.download!.version.isNotEmpty) {
+      add('الإصدار', game.download!.version);
+    }
+    add('الحزمة', game.packageName);
+
+    return List<Widget>.generate(items.length, (int i) {
+      return _infoRow(items[i].key, items[i].value, last: i == items.length - 1);
+    });
+  }
+
+  /// تنسيق تاريخ YYYY-MM-DD إلى صيغة عربية مقروءة (12 مايو 2024).
+  String _fmtDate(String iso) {
+    if (iso.isEmpty) return '';
+    final RegExpMatch? m =
+        RegExp(r'^(\d{4})-(\d{2})-(\d{2})').firstMatch(iso);
+    if (m == null) return iso;
+    const List<String> months = <String>[
+      'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
+      'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر',
+    ];
+    final int mi = (int.tryParse(m.group(2) ?? '') ?? 1) - 1;
+    return '${int.tryParse(m.group(3) ?? '') ?? ''} ${mi >= 0 && mi < 12 ? months[mi] : ''} ${m.group(1)}';
   }
 }

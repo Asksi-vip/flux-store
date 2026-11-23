@@ -30,6 +30,7 @@ if (!defined('FLUX_RESOLVE_ALLOW_LOCAL')) {
 define('FLUX_RESOLVE_MAX_HOPS', 4);
 define('FLUX_RESOLVE_TIMEOUT', 20);
 define('FLUX_RESOLVE_PAGE_LIMIT', 3145728); // 3MB كحد أقصى لجلب نص الصفحة
+define('FLUX_RESOLVE_UA', 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36');
 
 /** امتدادات الملفات المقبولة كرابط مباشر. */
 function flux_file_extensions()
@@ -62,13 +63,40 @@ function flux_url_allowed($url)
 }
 
 /** تنفيذ طلب HTTP وإرجاع الحالة + الترويسات + جزء من الجسم (أو null عند الفشل).
- *  $jarPath ملف كوكيز مشترك بين طلبات نفس العملية (لميديافاير والصفحات المسجلة).
- *  $postFields إرسال POST متعدد الأجزاء عند تمرير مصفوفة. */
-function flux_http_fetch($url, $headersOnly = false, $withBody = true, $jarPath = null, $postFields = null, $extraHeaders = array())
+ *  $jarPath ملف كوكيز مشترك بين طلبات نفس العملية (ميديافاير/modsfire والصفحات المسجلة).
+ *  $postFields إرسال POST متعدد الأجزاء عند تمرير مصفوفة.
+ *  $referer ترويسة المُحيل (تحتاجها مواقع مثل modsfire لنقطة التنزيل النهائية).
+ *  عند حجب كلاودفلير (403 Just a moment) نحاول عبر curl النظامي — بصمة مختلفة تعبر أحيانًا. */
+function flux_http_fetch($url, $headersOnly = false, $withBody = true, $jarPath = null, $postFields = null, $extraHeaders = array(), $referer = '')
 {
     if (!flux_url_allowed($url)) {
         return null;
     }
+    $r = flux_http_fetch_curl($url, $headersOnly, $withBody, $jarPath, $postFields, $extraHeaders, $referer);
+    $challenged = false;
+    if ($r === null) {
+        $challenged = true;
+    } else {
+        $st = (int) $r['status'];
+        $body = (string) $r['body'];
+        if ($st === 403 || $st === 503) {
+            if (stripos($body, 'just a moment') !== false || stripos($body, 'challenge-platform') !== false || stripos($body, 'cf-browser-verification') !== false || stripos($body, 'cloudflare') !== false) {
+                $challenged = true;
+            }
+        }
+    }
+    if ($challenged) {
+        $r2 = flux_http_fetch_shell($url, $headersOnly, $jarPath, $postFields, $referer);
+        if ($r2 !== null) {
+            return $r2;
+        }
+    }
+    return $r;
+}
+
+/** الجلب عبر cURL الداخلي (مع بديل التدفق عند غياب الإضافة). */
+function flux_http_fetch_curl($url, $headersOnly = false, $withBody = true, $jarPath = null, $postFields = null, $extraHeaders = array(), $referer = '')
+{
     $status = 0;
     $headers = array();
     $body = '';
@@ -76,6 +104,7 @@ function flux_http_fetch($url, $headersOnly = false, $withBody = true, $jarPath 
 
     if (function_exists('curl_init')) {
         $ch = curl_init((string) $url);
+        $bodyLen = 0;
         $opts = array(
             CURLOPT_RETURNTRANSFER   => true,
             CURLOPT_FOLLOWLOCATION   => true,
@@ -94,10 +123,25 @@ function flux_http_fetch($url, $headersOnly = false, $withBody = true, $jarPath 
                 }
                 return strlen($line);
             },
-            CURLOPT_USERAGENT        => 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36',
-            CURLOPT_HTTPHEADER       => array_merge(array('Accept: text/html,application/xhtml+xml,application/octet-stream,*/*'), $extraHeaders),
+            // حد صارم على القراءة: نوقف النقل بعد حد الصفحة — لا ننزّل ملف 200MB للذاكرة
+            CURLOPT_WRITEFUNCTION    => function ($ch, $data) use (&$body, &$bodyLen) {
+                $body .= $data;
+                $bodyLen += strlen($data);
+                if ($bodyLen > FLUX_RESOLVE_PAGE_LIMIT) {
+                    return -1; // إيقاف النقل — الترويسات والحالة تُقرأ بعد الإيقاف
+                }
+                return strlen($data);
+            },
+            CURLOPT_USERAGENT        => FLUX_RESOLVE_UA,
+            CURLOPT_HTTPHEADER       => array_merge(array(
+                'Accept: text/html,application/xhtml+xml,application/octet-stream,*/*',
+                'Accept-Language: en-US,en;q=0.9,ar;q=0.8',
+            ), $extraHeaders),
             CURLOPT_ENCODING         => '',
         );
+        if ($referer !== '') {
+            $opts[CURLOPT_REFERER] = $referer;
+        }
         if ($jarPath !== null) {
             $opts[CURLOPT_COOKIEJAR] = $jarPath;
             $opts[CURLOPT_COOKIEFILE] = $jarPath;
@@ -110,36 +154,40 @@ function flux_http_fetch($url, $headersOnly = false, $withBody = true, $jarPath 
             $opts[CURLOPT_NOBODY] = true;
         }
         curl_setopt_array($ch, $opts);
-        if ($withBody && !$headersOnly) {
-            // نقرأ الجسم كله ثم نقصه — أبسط وأأمن من write function مع حد صارم
-            $body = (string) curl_exec($ch);
-            if (strlen($body) > FLUX_RESOLVE_PAGE_LIMIT) {
-                $body = substr($body, 0, FLUX_RESOLVE_PAGE_LIMIT);
-            }
-        } else {
-            curl_exec($ch);
-        }
+        curl_exec($ch);
         $status  = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
         $finalUrl = (string) curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
         curl_close($ch);
         if ($status === 0) {
             return null;
         }
+        if (strlen($body) > FLUX_RESOLVE_PAGE_LIMIT) {
+            $body = substr($body, 0, FLUX_RESOLVE_PAGE_LIMIT);
+        }
         return array('status' => $status, 'headers' => $headers, 'body' => $body, 'final_url' => $finalUrl);
     }
 
     // بديل بلا cURL: file_get_contents مع سياق تدفق (تتبع إعادة التوجيه حتى 5)
-    $ctx = stream_context_create(array(
+    $ctxOpts = array(
         'http' => array(
             'method'        => $headersOnly ? 'HEAD' : 'GET',
             'follow_location' => 1,
             'max_redirects' => 5,
             'timeout'       => FLUX_RESOLVE_TIMEOUT,
-            'user_agent'    => 'Mozilla/5.0 (Linux; Android 13) Chrome/124.0 Mobile Safari/537.36',
+            'user_agent'    => FLUX_RESOLVE_UA,
             'ignore_errors' => true,
         ),
         'ssl' => array('verify_peer' => true),
-    ));
+    );
+    if ($referer !== '') {
+        $ctxOpts['http']['header'] = 'Referer: ' . $referer . "\r\n";
+    }
+    if ($postFields !== null && is_array($postFields)) {
+        $ctxOpts['http']['method'] = 'POST';
+        $ctxOpts['http']['header'] .= "Content-Type: multipart/form-data\r\n";
+        $ctxOpts['http']['content'] = http_build_query($postFields);
+    }
+    $ctx = stream_context_create($ctxOpts);
     $fh = @fopen((string) $url, 'rb', false, $ctx);
     if ($fh === false) {
         return null;
@@ -168,6 +216,76 @@ function flux_http_fetch($url, $headersOnly = false, $withBody = true, $jarPath 
         return null;
     }
     return array('status' => $status, 'headers' => $headers, 'body' => $body, 'final_url' => $finalUrl !== '' ? $finalUrl : $url);
+}
+
+/** الجلب عبر curl النظامي (exec) — بصمة TLS مختلفة تعبر حجب كلاودفلير أحيانًا.
+ *  يعيد بنفس بنية flux_http_fetch_curl أو null عند الفشل/عدم توفر exec. */
+function flux_http_fetch_shell($url, $headersOnly = false, $jarPath = null, $postFields = null, $referer = '')
+{
+    $disabled = array_map('trim', explode(',', (string) ini_get('disable_functions')));
+    if (in_array('exec', $disabled, true)) {
+        return null;
+    }
+    $jar = ($jarPath !== null && $jarPath !== '') ? $jarPath : tempnam(sys_get_temp_dir(), 'fluxshell_');
+    $bodyFile = tempnam(sys_get_temp_dir(), 'fluxbody_');
+    $hdrFile = tempnam(sys_get_temp_dir(), 'fluxhdr_');
+    $cmd = 'curl -s -L --compressed -m ' . (int) FLUX_RESOLVE_TIMEOUT
+        . ' -A ' . escapeshellarg(FLUX_RESOLVE_UA)
+        . ' -H ' . escapeshellarg('Accept: text/html,application/xhtml+xml,application/octet-stream,*/*')
+        . ' -H ' . escapeshellarg('Accept-Language: en-US,en;q=0.9,ar;q=0.8')
+        . ' -b ' . escapeshellarg($jar) . ' -c ' . escapeshellarg($jar)
+        . ($referer !== '' ? ' -e ' . escapeshellarg($referer) : '')
+        . ' -D ' . escapeshellarg($hdrFile)
+        . ' --max-filesize ' . (int) FLUX_RESOLVE_PAGE_LIMIT
+        . ($headersOnly ? ' -I' : '')
+        . ' --output ' . escapeshellarg($bodyFile);
+    if ($postFields !== null && is_array($postFields)) {
+        foreach ($postFields as $k => $v) {
+            $cmd .= ' -F ' . escapeshellarg($k . '=' . (string) $v);
+        }
+    }
+    $cmd .= ' ' . escapeshellarg((string) $url) . ' 2>/dev/null';
+    exec($cmd, $out, $code);
+    $body = ($headersOnly || $code !== 0) ? '' : (string) @file_get_contents($bodyFile);
+    @unlink($bodyFile);
+    $rawHeaders = (string) @file_get_contents($hdrFile);
+    @unlink($hdrFile);
+    // أكواد الإيقاف المتوقعة مقبولة: 63 = تجاوز حد الحجم، 23 = إيقاف كتابة، 18 = نقل جزئي
+    $acceptable = array(0, 18, 23, 63);
+    if ($rawHeaders === '' || (!in_array($code, $acceptable, true) && $body === '')) {
+        return null;
+    }
+    // آخر كتلة ترويسات = استجابة الوجهة النهائية بعد إعادة التوجيه
+    $blocks = preg_split('~\r?\n\r?\n~', trim($rawHeaders));
+    $last = (string) end($blocks);
+    $status = 0;
+    $headers = array();
+    foreach (preg_split('~\r?\n~', $last) as $line) {
+        if (preg_match('~^HTTP/\S+\s+(\d+)~i', $line, $m)) {
+            $status = (int) $m[1];
+            $headers = array();
+            continue;
+        }
+        $pos = strpos($line, ':');
+        if ($pos !== false) {
+            $headers[strtolower(trim(substr($line, 0, $pos)))] = trim(substr($line, $pos + 1));
+        }
+    }
+    // الرابط النهائي من آخر location إن وجد
+    $finalUrl = $url;
+    if (preg_match_all('~^location:\s*(\S+)~mi', $rawHeaders, $lm)) {
+        $lastLoc = (string) end($lm[1]);
+        if ($lastLoc !== '') {
+            $abs = flux_absolute_url($url, $lastLoc);
+            if ($abs !== '') {
+                $finalUrl = $abs;
+            }
+        }
+    }
+    if ($status === 0) {
+        return null;
+    }
+    return array('status' => $status, 'headers' => $headers, 'body' => $body, 'final_url' => $finalUrl);
 }
 
 /** قراءة الحجم الكلي من ترويسة Content-Range (استجابة مقطع 0-0). */
@@ -199,10 +317,11 @@ function flux_ctype_is_file($ctype, $disposition)
     return true;
 }
 
-/** فحص رابط: هل هو ملف مباشر فعلي؟ يعيد معلومات الحجم والاسم والنوع. */
-function flux_probe_url($url)
+/** فحص رابط: هل هو ملف مباشر فعلي؟ يعيد معلومات الحجم والاسم والنوع.
+ *  $jarPath/$referer تمرر جلسة الموقع والمُحيل (modsfire وغيرها ترفض بدونها). */
+function flux_probe_url($url, $jarPath = null, $referer = '')
 {
-    $r = flux_http_fetch($url, true, false);
+    $r = flux_http_fetch($url, true, false, $jarPath, null, array(), $referer);
     $size = 0;
     $ctype = '';
     $disposition = '';
@@ -217,9 +336,8 @@ function flux_probe_url($url)
         $final = $r['final_url'];
     }
     if ($size === 0 || !flux_ctype_is_file($ctype, $disposition)) {
-        // بعض الخوادم ترفض HEAD أو ترسل ترويسات ناقصة — مقطع 0-0 يعطي الحجم الكلي
-        $probe = preg_replace('~^(https?://[^/]+)(/[^?]*)?.*$~i', '$0', $url);
-        $r2 = flux_http_fetch($probe ? $url : $url, false, true);
+        // بعض الخوادم ترفض HEAD أو ترسل ترويسات ناقصة — GET بمقطع 0-0 يعطي الحجم الكلي
+        $r2 = flux_http_fetch($url, false, true, $jarPath, null, array('Range: bytes=0-0'), $referer);
         if ($r2 !== null) {
             $b2 = is_array($r2['headers']) ? $r2['headers'] : array();
             $s2 = (int) (isset($b2['content-length']) ? $b2['content-length'] : 0);
@@ -395,6 +513,43 @@ function flux_drive_candidates($url)
     return $cands;
 }
 
+/** تحويلات مواقع معروفة رابطها المباشر ثابت الصيغة (بلا HTML).
+ *  تعيد قائمة مرشحات تُفحص قبل فتح الصفحة، أو مصفوفة فارغة. */
+function flux_host_candidates($url)
+{
+    $url = (string) $url;
+    $host = strtolower((string) (parse_url($url, PHP_URL_HOST) ?: ''));
+    $out = array();
+
+    // pixeldrain: صفحة /u/<id> ← واجهة API المباشرة
+    if (strpos($host, 'pixeldrain.com') !== false && preg_match('~/u/([A-Za-z0-9]+)~', $url, $m)) {
+        $out[] = 'https://pixeldrain.com/api/file/' . $m[1] . '?download';
+        return $out;
+    }
+    // دروببوكس: أي رابط ← رابط تنزيل مباشر
+    if (strpos($host, 'dropbox.com') !== false) {
+        $u = preg_replace('~([?&])dl=0~', '$1dl=1', $url);
+        if (strpos($u, 'dl=1') === false) {
+            $u .= (strpos($u, '?') === false ? '?' : '&') . 'dl=1';
+        }
+        $out[] = $u;
+        return $out;
+    }
+    // OneDrive / واجهات مايكروسوفت
+    if (strpos($host, '1drv.ms') !== false || strpos($host, 'onedrive.live.com') !== false || strpos($host, 'sharepoint.com') !== false) {
+        $out[] = $url . (strpos($url, '?') === false ? '?' : '&') . 'download=1';
+        return $out;
+    }
+    return $out;
+}
+
+/** هل الرابط المباشر موقّع/مؤقت الصلاحية؟ (modsfire R2 وغيرها) —
+ *  يقرر نظام التحديث التلقائي مدى قِدم الرابط المقبولة قبل إعادة الاستخراج. */
+function flux_url_is_signed($url)
+{
+    return (bool) preg_match('~X-Amz-(Signature|Expires)|Signature=|Expires=|token=|sig=~i', (string) parse_url((string) $url, PHP_URL_QUERY) ?: '');
+}
+
 /** استخراج كل مرشحات التحميل المباشر من نص صفحة HTML بترتيب الأولوية. */
 function flux_extract_candidates($html, $baseUrl)
 {
@@ -496,7 +651,7 @@ function flux_extract_candidates($html, $baseUrl)
  * المحرك الرئيسي: حل أي رابط (صفحة أو مباشر) إلى رابط ملف مباشر مع الاسم والحجم.
  * يعيد مصفوفة: ok, direct_url, file_name, size, size_text, content_type, source, note, trail.
  */
-function flux_resolve_link($url, $depth = 0, &$trail = array(), $jarPath = null)
+function flux_resolve_link($url, $depth = 0, &$trail = array(), $jarPath = null, $referer = '')
 {
     $url = trim((string) $url);
     $trail[] = $url;
@@ -509,7 +664,7 @@ function flux_resolve_link($url, $depth = 0, &$trail = array(), $jarPath = null)
     if ($depth > FLUX_RESOLVE_MAX_HOPS) {
         return array('ok' => false, 'note' => 'تعذّر الوصول للملف — سلسلة إعادة توجيه طويلة جدًا', 'trail' => $trail);
     }
-    // ملف كوكيز مشترك لكل طلبات نفس الرابط (جلسة ميديافاير مثلاً)
+    // ملف كوكيز مشترك لكل طلبات نفس الرابط (جلسة ميديافاير/modsfire مثلاً)
     if ($jarPath === null) {
         $jarPath = tempnam(sys_get_temp_dir(), 'fluxjar');
     }
@@ -518,10 +673,18 @@ function flux_resolve_link($url, $depth = 0, &$trail = array(), $jarPath = null)
     $host = strtolower((string) (parse_url($url, PHP_URL_HOST) ?: ''));
     $isMediafire = strpos($host, 'mediafire.com') !== false;
 
+    // 0) مواقع برابط مباشر ثابت الصيغة (pixeldrain / dropbox / onedrive)
+    foreach (flux_host_candidates($url) as $cand) {
+        $probe = flux_probe_url($cand, $jarPath, $url);
+        if ($probe !== null) {
+            return flux_resolve_result($probe, 'رابط مباشر (تحويل)', $trail, $url);
+        }
+    }
+
     // 1) جوجل درايف له معالجة خاصة
     if ($isDrive) {
         foreach (flux_drive_candidates($url) as $cand) {
-            $probe = flux_probe_url($cand);
+            $probe = flux_probe_url($cand, $jarPath, $url);
             if ($probe !== null) {
                 return flux_resolve_result($probe, 'جوجل درايف', $trail, $url);
             }
@@ -531,25 +694,26 @@ function flux_resolve_link($url, $depth = 0, &$trail = array(), $jarPath = null)
 
     // 2) الرابط نفسه مباشر؟ (امتداد ملف)
     if (flux_is_file_url($url)) {
-        $probe = flux_probe_url($url);
+        $probe = flux_probe_url($url, $jarPath, $referer);
         if ($probe !== null) {
             return flux_resolve_result($probe, 'رابط مباشر', $trail, $url);
         }
     }
 
-    // 3) جلب الصفحة واستخراج المرشحات
-    $page = flux_http_fetch($url, false, true, $jarPath);
+    // 3) جلب الصفحة واستخراج المرشحات (مع المُحيل والكوكيز)
+    $page = flux_http_fetch($url, false, true, $jarPath, null, array(), $referer);
     if ($page === null) {
         return array('ok' => false, 'note' => 'تعذّر فتح الصفحة — تحقق من الرابط أو من توفر الإنترنت للخادم', 'trail' => $trail);
     }
     $ctype = strtolower((string) (isset($page['headers']['content-type']) ? $page['headers']['content-type'] : ''));
     $finalUrl = $page['final_url'];
+    $pageStatus = (int) $page['status'];
 
     // الصفحة نفسها طلعت ملفًا مباشرًا بعد إعادة التوجيه
     if (flux_ctype_is_file($ctype, isset($page['headers']['content-disposition']) ? $page['headers']['content-disposition'] : '')) {
         $probe = array(
             'url'          => $finalUrl,
-            'status'       => $page['status'],
+            'status'       => $pageStatus,
             'size'         => (int) (isset($page['headers']['content-length']) ? $page['headers']['content-length'] : 0),
             'content_type' => $ctype,
             'disposition'  => isset($page['headers']['content-disposition']) ? $page['headers']['content-disposition'] : '',
@@ -561,6 +725,11 @@ function flux_resolve_link($url, $depth = 0, &$trail = array(), $jarPath = null)
     }
 
     $html = $page['body'];
+
+    // محجوب بكلاودفلير حتى بعد الاحتياطي؟ رسالة واضحة
+    if ($pageStatus === 403 || $pageStatus === 503) {
+        return array('ok' => false, 'note' => 'الموقع محمي بحماية كلاودفلير ورفض الوصول من الخادم — جرّب رابط آخر أو ارفع الملف على استضافة مباشرة', 'trail' => $trail);
+    }
 
     // ميديافاير معمّم؟ (تحذير أمني من ميديافاير نفسها — لا رابط مباشر فيها)
     if ($isMediafire && (stripos($html, 'malware_advisory') !== false || stripos($html, 'download_repair.php') !== false) && stripos($html, 'downloadButton') === false) {
@@ -585,12 +754,11 @@ function flux_resolve_link($url, $depth = 0, &$trail = array(), $jarPath = null)
     }
 
     foreach ($candidates as $cand) {
-        // مرشح صفحة إعادة توجيه؟ (بدون امتداد ملف) → قفزة أخرى
+        // مرشح صفحة إعادة توجيه؟ (بدون امتداد ملف) → قفزة أخرى بمُحيل الصفحة الحالية
         if (!flux_is_file_url($cand) && $depth < FLUX_RESOLVE_MAX_HOPS) {
-            // لا نفتح كل مرشح كصفحة — فقط إذا كانت العلامات تدل على تحميل
             $isRedirectish = stripos($cand, 'mediafire.com') === false && stripos($cand, 'drive.google.com') === false;
             if ($isRedirectish) {
-                $sub = flux_resolve_link($cand, $depth + 1, $trail, $jarPath);
+                $sub = flux_resolve_link($cand, $depth + 1, $trail, $jarPath, $finalUrl);
                 if (!empty($sub['ok'])) {
                     $sub['source'] = $sub['source'] === 'رابط مباشر' ? 'صفحة (إعادة توجيه)' : $sub['source'];
                     $sub['source_url'] = $url;
@@ -599,7 +767,7 @@ function flux_resolve_link($url, $depth = 0, &$trail = array(), $jarPath = null)
                 continue;
             }
         }
-        $probe = flux_probe_url($cand);
+        $probe = flux_probe_url($cand, $jarPath, $finalUrl);
         if ($probe !== null) {
             $res = flux_resolve_result($probe, $isMediafire ? 'ميديافاير' : 'صفحة (عام)', $trail, $url);
             if ($isMediafire && $res['size'] === 0) {
@@ -612,7 +780,7 @@ function flux_resolve_link($url, $depth = 0, &$trail = array(), $jarPath = null)
 
     return array(
         'ok'   => false,
-        'note' => 'لم نجد رابط تحميل مباشر في الصفحة — جرّب رابط الصفحة نفسه (مثل رابط ميديافاير /file/) أو ارفع الملف على استضافة مباشرة',
+        'note' => 'لم نجد رابط تحميل مباشر في الصفحة — جرّب رابط الصفحة نفسه (مثل رابط ميديافاير /file/ أو رابط modsfire) أو ارفع الملف على استضافة مباشرة',
         'trail' => $trail,
     );
 }
@@ -677,7 +845,7 @@ function flux_deferred_download($html, $pageUrl, $jarPath, &$trail)
         if ($result === 'success' && $status === 'success' && !empty($data['download_url'])) {
             $dl = (string) $data['download_url'];
             $trail[] = $dl;
-            $probe = flux_probe_url($dl);
+            $probe = flux_probe_url($dl, $jarPath, $pageUrl);
             if ($probe === null) {
                 // رابط الـ API يعتبر صالحًا حتى لو فشل الفحص (بعض الخوادم ترفض HEAD)
                 $isMf = stripos($pageUrl, 'mediafire.com') !== false;

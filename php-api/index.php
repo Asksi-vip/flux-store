@@ -85,28 +85,34 @@ if (ctype_digit($parts[1])) {
 
     // ---------- تحديث روابط التحميل القديمة (games/{id}/refresh/) ----------
     // يستدعيها التطبيق قبل بدء التحميل: إذا كان الملف مأخوذًا من صفحة
-    // (ميديافاير/درايف) وقديمًا (أكثر من ساعتين) نستخرج الرابط المباشر من جديد
+    // (ميديافاير/modsfire/درايف) وقديمًا نستخرج الرابط المباشر من جديد.
+    // الروابط الموقّعة المؤقتة (مثل modsfire R2) تعيد الاستخراج في كل تحميل
+    // لأن صلاحيتها دقائق فقط، والبقية كل ساعتين.
     if (isset($parts[2]) && $parts[2] === 'refresh') {
         $stmt = $pdo->prepare('SELECT * FROM game_files WHERE game_id = :gid ORDER BY id ASC');
         $stmt->execute(array(':gid' => $gid));
         $rows = $stmt->fetchAll();
         $upd = $pdo->prepare("UPDATE game_files SET url = :url, size = :size, resolved_at = datetime('now') WHERE id = :id");
         $now = time();
-        foreach ($rows as $row) {
-            $src = trim((string) $row['source_url']);
+        foreach ($rows as $frow) {
+            $src = trim((string) $frow['source_url']);
             if ($src === '' || flux_is_file_url($src)) {
                 continue; // بلا صفحة مصدر أو المصدر نفسه رابط مباشر — لا تحديث
             }
-            $resolvedAt = strtotime((string) $row['resolved_at']);
-            $stale = ($row['resolved_at'] === '' || $resolvedAt === false || ($now - $resolvedAt) > 2 * 3600);
+            if (flux_url_is_signed((string) $frow['url'])) {
+                $stale = true; // رابط موقّع بصلاحية قصيرة — حدّث دائمًا
+            } else {
+                $resolvedAt = strtotime((string) $frow['resolved_at']);
+                $stale = ($frow['resolved_at'] === '' || $resolvedAt === false || ($now - $resolvedAt) > 2 * 3600);
+            }
             if (!$stale) {
                 continue; // الرابط حديث — لا حاجة لإعادة الاستخراج
             }
             $res = flux_resolve_link($src);
             if (!empty($res['ok'])) {
-                $newUrl = ($res['direct_url'] !== '') ? (string) $res['direct_url'] : (string) $row['url'];
-                $newSize = ((int) $res['size'] > 0) ? (int) $res['size'] : (int) $row['size'];
-                $upd->execute(array(':url' => $newUrl, ':size' => $newSize, ':id' => (int) $row['id']));
+                $newUrl = ($res['direct_url'] !== '') ? (string) $res['direct_url'] : (string) $frow['url'];
+                $newSize = ((int) $res['size'] > 0) ? (int) $res['size'] : (int) $frow['size'];
+                $upd->execute(array(':url' => $newUrl, ':size' => $newSize, ':id' => (int) $frow['id']));
             }
         }
         // إعادة القراءة بعد التحديث ثم إرجاع اللعبة بنفس صيغة التفاصيل
@@ -116,11 +122,13 @@ if (ctype_digit($parts[1])) {
         $stmt = $pdo->prepare('SELECT * FROM game_files WHERE game_id = :gid ORDER BY id ASC');
         $stmt->execute(array(':gid' => $gid));
         $files = $stmt->fetchAll();
-        flux_json(flux_serialize_game($row, $files));
+        $catSlugs = flux_game_category_slugs($pdo, array($gid));
+        flux_json(flux_serialize_game($row, $files, isset($catSlugs[$gid]) ? $catSlugs[$gid] : array()));
     }
 
     $filesMap = flux_files_for_games($pdo, array($gid));
-    flux_json(flux_serialize_game($row, isset($filesMap[$gid]) ? $filesMap[$gid] : array()));
+    $catSlugs = flux_game_category_slugs($pdo, array($gid));
+    flux_json(flux_serialize_game($row, isset($filesMap[$gid]) ? $filesMap[$gid] : array(), isset($catSlugs[$gid]) ? $catSlugs[$gid] : array()));
 }
 
 // أي مسار آخر تحت /games

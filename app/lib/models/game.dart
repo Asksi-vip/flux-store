@@ -96,10 +96,14 @@ class Game {
   final double? discountPrice;
   final String category;
   final String categoryDisplay;
+  final List<String> categories; // التصنيفات المتعددة (معرفات)
+  final List<String> categoriesDisplay; // التصنيفات المتعددة (أسماء للعرض)
   final double rating;
   final String image;
   final String banner;
   final String releaseDate;
+  final String developer; // اسم المطوّر (نمط سوق أبِل)
+  final String lastUpdated; // تاريخ آخر تحديث
   final bool isFeatured;
   final String packageName;
   final DownloadInfo? download;
@@ -112,10 +116,14 @@ class Game {
     required this.discountPrice,
     required this.category,
     required this.categoryDisplay,
+    this.categories = const [],
+    this.categoriesDisplay = const [],
     required this.rating,
     required this.image,
     required this.banner,
     required this.releaseDate,
+    this.developer = '',
+    this.lastUpdated = '',
     required this.isFeatured,
     this.packageName = '',
     this.download,
@@ -163,10 +171,18 @@ class Game {
             : _toDouble(json['discount_price']),
         category: json['category']?.toString() ?? '',
         categoryDisplay: json['category_display']?.toString() ?? '',
+        categories: ((json['categories'] as List?) ?? const [])
+            .map((dynamic e) => e.toString())
+            .toList(),
+        categoriesDisplay: ((json['categories_display'] as List?) ?? const [])
+            .map((dynamic e) => e.toString())
+            .toList(),
         rating: _toDouble(json['rating']),
         image: json['image']?.toString() ?? '',
         banner: json['banner']?.toString() ?? '',
         releaseDate: json['release_date']?.toString() ?? '',
+        developer: json['developer']?.toString() ?? '',
+        lastUpdated: json['last_updated']?.toString() ?? '',
         isFeatured: json['is_featured'] == true,
         packageName: json['package_name']?.toString() ?? '',
         download: json['download'] is Map
@@ -183,10 +199,14 @@ class Game {
         'discount_price': discountPrice,
         'category': category,
         'category_display': categoryDisplay,
+        'categories': categories,
+        'categories_display': categoriesDisplay,
         'rating': rating,
         'image': image,
         'banner': banner,
         'release_date': releaseDate,
+        'developer': developer,
+        'last_updated': lastUpdated,
         'is_featured': isFeatured,
         'package_name': packageName,
         'download': download?.toJson(),

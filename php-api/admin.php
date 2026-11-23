@@ -8,8 +8,10 @@
 session_start();
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/db.php';
-// مستخرج الرابط المباشر (ميديافاير / جوجل درايف / صفحات التحميل)
+// مستخرج الرابط المباشر (ميديافاير / modsfire / جوجل درايف / صفحات التحميل)
 require_once __DIR__ . '/resolve.php';
+// التعبئة التلقائية بالذكاء الاصطناعي (وصف كامل + ملء الناقص)
+require_once __DIR__ . '/ai.php';
 
 header('Content-Type: text/html; charset=utf-8');
 
@@ -63,6 +65,7 @@ if ($logged && $pdo !== null && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($
                      discount_price = :discount_price, category = :category, rating = :rating,
                      image_url = :image_url, banner_url = :banner_url,
                      release_date = :release_date, is_featured = :is_featured,
+                     developer = :developer, last_updated = :last_updated,
                      package_name = :package_name, download_version = :download_version,
                      download_version_code = :download_version_code WHERE id = :id'
                 );
@@ -76,9 +79,11 @@ if ($logged && $pdo !== null && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($
                     $stmt = $pdo->prepare(
                         'INSERT INTO games (name, description, price, discount_price, category, rating,
                          image_url, banner_url, release_date, is_featured,
+                         developer, last_updated,
                          package_name, download_version, download_version_code)
                          VALUES (:name, :description, :price, :discount_price, :category, :rating,
                          :image_url, :banner_url, :release_date, :is_featured,
+                         :developer, :last_updated,
                          :package_name, :download_version, :download_version_code)'
                     );
                     $stmt->execute(flux_prefix_params($fields));
@@ -87,6 +92,12 @@ if ($logged && $pdo !== null && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($
                 } catch (Throwable $e) {
                     $error = 'تعذرت الإضافة — تأكد أن اسم اللعبة غير مكرر';
                 }
+            }
+
+            // التصنيفات المتعددة: مربعات الاختيار ← جدول الربط (والأساسي يأخذ أول واحدة)
+            if ($gid > 0) {
+                $selCats = (isset($_POST['categories']) && is_array($_POST['categories'])) ? $_POST['categories'] : array();
+                flux_set_game_categories($pdo, $gid, array_map('strval', $selCats));
             }
 
             // ملفات التحميل من النموذج (APK + OBB + صفوف Data) — الحزمة تشتق تلقائيًا من الروابط
@@ -149,8 +160,55 @@ if ($logged && $pdo !== null && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($
             $stmt->execute(array(':id' => $id));
             $stmt = $pdo->prepare('DELETE FROM game_files WHERE game_id = :id');
             $stmt->execute(array(':id' => $id));
+            $stmt = $pdo->prepare('DELETE FROM game_categories WHERE game_id = :id');
+            $stmt->execute(array(':id' => $id));
         }
         header('Location: admin.php?msg=' . urlencode('تم حذف اللعبة'));
+        exit;
+    }
+
+    // ---------- عمليات التصنيفات (إضافة / تعديل / حذف) ----------
+    if ($action === 'add_category') {
+        $name = trim((string) (isset($_POST['name']) ? $_POST['name'] : ''));
+        if ($name === '') {
+            header('Location: admin.php?categories=1&err=' . urlencode('اسم التصنيف مطلوب'));
+            exit;
+        }
+        // المعرف: حروف إنجليزية من الاسم إن توفرت، وإلا رقم آمن
+        $slug = strtolower(trim((string) (isset($_POST['slug']) ? $_POST['slug'] : '')));
+        if ($slug === '' || !preg_match('~^[a-z0-9_-]{2,40}$~', $slug)) {
+            $slug = 'cat_' . substr(md5($name . microtime()), 0, 8);
+        }
+        try {
+            $pdo->prepare('INSERT INTO categories (slug, name, sort) VALUES (:slug, :name, (SELECT COALESCE(MAX(sort), 0) + 1 FROM categories))')
+                ->execute(array(':slug' => $slug, ':name' => $name));
+            header('Location: admin.php?categories=1&msg=' . urlencode('تمت إضافة التصنيف: ' . $name));
+        } catch (Throwable $e) {
+            header('Location: admin.php?categories=1&err=' . urlencode('المعرف مستخدم — اختر معرفًا آخر'));
+        }
+        exit;
+    }
+
+    if ($action === 'update_category') {
+        $cid  = (int) (isset($_POST['category_id']) ? $_POST['category_id'] : 0);
+        $name = trim((string) (isset($_POST['name']) ? $_POST['name'] : ''));
+        if ($cid > 0 && $name !== '') {
+            $pdo->prepare('UPDATE categories SET name = :name WHERE id = :id')
+                ->execute(array(':name' => $name, ':id' => $cid));
+            header('Location: admin.php?categories=1&msg=' . urlencode('تم تعديل التصنيف'));
+        } else {
+            header('Location: admin.php?categories=1&err=' . urlencode('الاسم مطلوب'));
+        }
+        exit;
+    }
+
+    if ($action === 'delete_category') {
+        $cid = (int) (isset($_POST['category_id']) ? $_POST['category_id'] : 0);
+        if ($cid > 0) {
+            $pdo->prepare('DELETE FROM categories WHERE id = :id')->execute(array(':id' => $cid));
+            $pdo->prepare('DELETE FROM game_categories WHERE category_id = :id')->execute(array(':id' => $cid));
+        }
+        header('Location: admin.php?categories=1&msg=' . urlencode('تم حذف التصنيف'));
         exit;
     }
 
@@ -164,7 +222,10 @@ if ($logged && $pdo !== null && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($
         }
         $fName = trim((string) (isset($_POST['file_name']) ? $_POST['file_name'] : ''));
         $fUrl  = trim((string) (isset($_POST['file_url']) ? $_POST['file_url'] : ''));
-        $fSize = (int) round(((float) (isset($_POST['size_mb']) && $_POST['size_mb'] !== '' ? $_POST['size_mb'] : 0)) * 1024 * 1024);
+        // الحجم بقيمة ووحدة (KB/MB/GB) — يُخزن بالبايتات
+        $fSizeVal  = (isset($_POST['size_value']) && $_POST['size_value'] !== '') ? $_POST['size_value'] : (isset($_POST['size_mb']) ? $_POST['size_mb'] : '');
+        $fSizeUnit = (isset($_POST['size_unit']) && $_POST['size_unit'] !== '') ? $_POST['size_unit'] : 'MB';
+        $fSize = flux_size_to_bytes($fSizeVal, $fSizeUnit);
         $fVc   = (int) (isset($_POST['version_code']) && $_POST['version_code'] !== '' ? $_POST['version_code'] : 0);
 
         if ($gid <= 0 || $fUrl === '') {
@@ -257,24 +318,52 @@ if ($logged && $pdo !== null && isset($_GET['edit'])) {
 }
 
 // تعبئة حقول روابط التحميل في النموذج من ملفات اللعبة المحفوظة (APK/OBB/Data)
-$apkPre  = array('url' => '', 'size' => '');
-$obbPre  = array('url' => '', 'size' => '', 'vc' => '0');
+// الحجم يُعرض بأقرب وحدة مناسبة (KB/MB/GB) مع حقل وحدة موازٍ
+
+/** تحويل بايتات إلى قيمة + وحدة للعرض في النموذج. */
+function flux_bytes_to_form($bytes)
+{
+    $bytes = (int) $bytes;
+    if ($bytes <= 0) {
+        return array('value' => '', 'unit' => 'MB');
+    }
+    $units = array(
+        array(1024 * 1024 * 1024, 'GB'),
+        array(1024 * 1024, 'MB'),
+        array(1024, 'KB'),
+    );
+    foreach ($units as $u) {
+        if ($bytes >= $u[0]) {
+            return array('value' => number_format($bytes / $u[0], 2, '.', ''), 'unit' => $u[1]);
+        }
+    }
+    return array('value' => number_format($bytes / 1024, 2, '.', ''), 'unit' => 'KB');
+}
+
+$apkPre  = array('url' => '', 'size' => '', 'unit' => 'MB');
+$obbPre  = array('url' => '', 'size' => '', 'unit' => 'MB', 'vc' => '0');
 $dataPre = array();
 if ($logged && $pdo !== null && $editGame) {
     $stmt = $pdo->prepare('SELECT * FROM game_files WHERE game_id = :gid ORDER BY id ASC');
     $stmt->execute(array(':gid' => (int) $editGame['id']));
     foreach ($stmt->fetchAll() as $pf) {
         if ($pf['type'] === 'apk' && $apkPre['url'] === '') {
+            $frm = flux_bytes_to_form($pf['size']);
             $apkPre['url']  = $pf['url'];
-            $apkPre['size'] = (int) $pf['size'] > 0 ? number_format($pf['size'] / 1048576, 2, '.', '') : '';
+            $apkPre['size'] = $frm['value'];
+            $apkPre['unit'] = $frm['unit'];
         } elseif ($pf['type'] === 'obb' && $obbPre['url'] === '') {
+            $frm = flux_bytes_to_form($pf['size']);
             $obbPre['url']  = $pf['url'];
-            $obbPre['size'] = (int) $pf['size'] > 0 ? number_format($pf['size'] / 1048576, 2, '.', '') : '';
+            $obbPre['size'] = $frm['value'];
+            $obbPre['unit'] = $frm['unit'];
             $obbPre['vc']   = (string) (int) $pf['version_code'];
         } elseif ($pf['type'] === 'data') {
+            $frm = flux_bytes_to_form($pf['size']);
             $dataPre[] = array(
                 'url'  => $pf['url'],
-                'size' => (int) $pf['size'] > 0 ? number_format($pf['size'] / 1048576, 2, '.', '') : '',
+                'size' => $frm['value'],
+                'unit' => $frm['unit'],
             );
         }
     }
@@ -282,14 +371,45 @@ if ($logged && $pdo !== null && $editGame) {
 
 $games = array();
 $filesCountMap = array();
+$gameCatsMap = array();
 if ($logged && $pdo !== null) {
     $games = $pdo->query('SELECT * FROM games ORDER BY id DESC')->fetchAll();
     // عدد ملفات التحميل لكل لعبة (لعرضه في الجدول)
     foreach ($pdo->query('SELECT game_id, COUNT(*) AS c FROM game_files GROUP BY game_id')->fetchAll() as $r) {
         $filesCountMap[(int) $r['game_id']] = (int) $r['c'];
     }
+    // تصنيفات كل لعبة للعرض في الجدول
+    $gids = array();
+    foreach ($games as $gg) {
+        $gids[] = (int) $gg['id'];
+    }
+    $slugMap = flux_game_category_slugs($pdo, $gids);
+    $nameMap = flux_categories();
+    foreach ($games as $gg) {
+        $slugs = isset($slugMap[(int) $gg['id']]) ? $slugMap[(int) $gg['id']] : array((string) $gg['category']);
+        $names = array();
+        foreach ($slugs as $sl) {
+            $names[] = isset($nameMap[$sl]) ? $nameMap[$sl] : $sl;
+        }
+        $gameCatsMap[(int) $gg['id']] = implode(' · ', $names);
+    }
 }
-$categories = flux_categories();
+// خريطة slug ← اسم من قاعدة البيانات (للعرض في جدول الألعاب)
+$categories = array();
+foreach ($catRows as $cr) {
+    $categories[$cr['slug']] = $cr['name'];
+}
+// تصنيفات قاعدة البيانات الديناميكية + تصنيفات اللعبة قيد التعديل
+$catRows    = $pdo !== null ? flux_categories_rows($pdo) : array();
+$editCatSlugs = array();
+if ($pdo !== null && $editGame) {
+    $editCatSlugs = flux_game_category_slugs($pdo, array((int) $editGame['id']));
+    if (empty($editCatSlugs)) {
+        $editCatSlugs = array((string) $editGame['category']);
+    }
+} elseif ($editGame) {
+    $editCatSlugs = array((string) $editGame['category']);
+}
 
 // ---------- صفحة إدارة ملفات لعبة معينة (?files=<id>) ----------
 $filesGame = null;
@@ -322,6 +442,12 @@ if ($logged && $pdo !== null && isset($_GET['files'])) {
 function e($v)
 {
     return htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
+}
+
+// ---------- صفحة إدارة التصنيفات (?categories=1) ----------
+$catPage = false;
+if ($logged && $pdo !== null && isset($_GET['categories'])) {
+    $catPage = true;
 }
 ?>
 <!DOCTYPE html>
@@ -391,21 +517,29 @@ function e($v)
             <div class="card">لا يمكن الاتصال بقاعدة البيانات.</div>
         <?php } else { ?>
 
-            <?php if ($filesGame === null) { ?>
+            <?php if ($filesGame === null && !$catPage) { ?>
             <!-- نموذج الإضافة/التعديل -->
             <div class="card">
                 <h2 style="font-size:16px; margin-bottom:4px;">
                     <?php echo $editGame ? 'تعديل: ' . e($editGame['name']) : 'إضافة لعبة جديدة'; ?>
                 </h2>
-                <form method="post" action="admin.php">
+                <form method="post" action="admin.php" id="game-form">
                     <input type="hidden" name="action" value="save">
                     <input type="hidden" name="id" value="<?php echo $editGame ? (int) $editGame['id'] : 0; ?>">
 
-                    <label>اسم اللعبة *</label>
-                    <input type="text" name="name" required value="<?php echo $editGame ? e($editGame['name']) : ''; ?>">
+                    <div class="row" style="align-items:flex-end;">
+                        <div style="flex:1 1 240px;">
+                            <label>اسم اللعبة *</label>
+                            <input type="text" name="name" required value="<?php echo $editGame ? e($editGame['name']) : ''; ?>">
+                        </div>
+                        <div style="flex:0 0 230px;">
+                            <button class="btn" type="button" onclick="fluxAiFill(this)" style="margin:0; width:100%; background:#7c3aed;">🤖 تعبئة تلقائية بالذكاء الاصطناعي</button>
+                            <div id="ai-status" style="font-size:11.5px; color:#b8b8c1; margin-top:6px;">يكتب الوصف الكامل ويملأ المطور والباكج نيم والتقييم والتواريخ والتصنيفات</div>
+                        </div>
+                    </div>
 
                     <label>الوصف</label>
-                    <textarea name="description"><?php echo $editGame ? e($editGame['description']) : ''; ?></textarea>
+                    <textarea name="description" id="f-description"><?php echo $editGame ? e($editGame['description']) : ''; ?></textarea>
 
                     <div class="row">
                         <div>
@@ -418,20 +552,39 @@ function e($v)
                         </div>
                         <div>
                             <label>التقييم (0 - 5)</label>
-                            <input type="number" step="0.1" min="0" max="5" name="rating" value="<?php echo $editGame ? e($editGame['rating']) : '4.5'; ?>">
-                        </div>
-                        <div>
-                            <label>التصنيف</label>
-                            <select name="category">
-                                <?php foreach ($categories as $value => $label) { ?>
-                                    <option value="<?php echo e($value); ?>" <?php echo ($editGame && $editGame['category'] === $value) ? 'selected' : ''; ?>><?php echo e($label); ?></option>
-                                <?php } ?>
-                            </select>
+                            <input type="number" step="0.1" min="0" max="5" name="rating" id="f-rating" value="<?php echo $editGame ? e($editGame['rating']) : '4.5'; ?>">
                         </div>
                         <div>
                             <label>تاريخ الإصدار</label>
-                            <input type="date" name="release_date" value="<?php echo $editGame ? e($editGame['release_date']) : '2024-01-01'; ?>">
+                            <input type="date" name="release_date" id="f-release_date" value="<?php echo $editGame ? e($editGame['release_date']) : '2024-01-01'; ?>">
                         </div>
+                        <div>
+                            <label>تاريخ آخر تحديث</label>
+                            <input type="date" name="last_updated" id="f-last_updated" value="<?php echo $editGame && $editGame['last_updated'] !== '' ? e($editGame['last_updated']) : ($editGame ? e($editGame['release_date']) : '2024-01-01'); ?>">
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div>
+                            <label>اسم المطوّر (نمط سوق أبِل)</label>
+                            <input type="text" name="developer" id="f-developer" placeholder="مثال: Rockstar Games" value="<?php echo $editGame ? e($editGame['developer']) : ''; ?>">
+                        </div>
+                        <div>
+                            <label>حزمة أندرويد (الباكج نيم)</label>
+                            <input type="text" name="package_name" id="f-package_name" dir="ltr" placeholder="com.company.game" value="<?php echo $editGame ? e($editGame['package_name']) : ''; ?>">
+                        </div>
+                    </div>
+
+                    <!-- التصنيفات المتعددة: مربعات اختيار من التصنيفات القابلة للإدارة -->
+                    <label>التصنيفات (اختر واحدة أو أكثر)</label>
+                    <div style="display:flex; flex-wrap:wrap; gap:8px 16px; background:#202024; border:1px solid #2a2a2a; border-radius:4px; padding:12px;">
+                        <?php foreach ($catRows as $cr) { ?>
+                        <label style="display:flex; align-items:center; gap:6px; margin:0; font-size:13.5px; color:#fff; cursor:pointer;">
+                            <input type="checkbox" name="categories[]" value="<?php echo e($cr['slug']); ?>" style="width:auto;"
+                                <?php echo in_array($cr['slug'], $editCatSlugs, true) ? 'checked' : ''; ?>>
+                            <?php echo e($cr['name']); ?>
+                        </label>
+                        <?php } ?>
                     </div>
 
                     <label>رابط صورة الغلاف (عمودية 600x900)</label>
@@ -443,7 +596,7 @@ function e($v)
                     <div class="row">
                         <div>
                             <label>إصدار التحميل (نص مثل 2.4.1)</label>
-                            <input type="text" name="download_version" value="<?php echo $editGame ? e($editGame['download_version']) : ''; ?>">
+                            <input type="text" name="download_version" id="f-download_version" value="<?php echo $editGame ? e($editGame['download_version']) : ''; ?>">
                         </div>
                         <div>
                             <label>رقم الإصدار (لتسمية OBB تلقائيًا)</label>
@@ -460,9 +613,17 @@ function e($v)
                             <input type="url" name="apk_url" value="<?php echo $apkPre['url']; ?>" placeholder="https://www.mediafire.com/file/xxxx/game.apk/file">
                             <button class="btn btn-ghost" type="button" onclick="fluxResolveRow(this)" style="margin:6px 0 0; font-size:11px; padding:4px 12px;">🔍 استخراج من صفحة</button>
                         </div>
-                        <div style="flex:0 0 150px;">
-                            <label>حجمه (ميغابايت)</label>
-                            <input type="number" step="0.01" min="0" name="apk_size_mb" value="<?php echo $apkPre['size']; ?>">
+                        <div style="flex:0 0 120px;">
+                            <label>الحجم</label>
+                            <input type="number" step="0.01" min="0" name="apk_size" data-size="apk" value="<?php echo $apkPre['size']; ?>">
+                        </div>
+                        <div style="flex:0 0 86px;">
+                            <label>الوحدة</label>
+                            <select name="apk_size_unit">
+                                <option <?php echo $apkPre['unit'] === 'KB' ? 'selected' : ''; ?>>KB</option>
+                                <option <?php echo $apkPre['unit'] === 'MB' ? 'selected' : ''; ?>>MB</option>
+                                <option <?php echo $apkPre['unit'] === 'GB' ? 'selected' : ''; ?>>GB</option>
+                            </select>
                         </div>
                     </div>
                     <div class="row">
@@ -471,11 +632,19 @@ function e($v)
                             <input type="url" name="obb_url" value="<?php echo $obbPre['url']; ?>" placeholder="https://site.com/main.120.com.example.game.obb">
                             <button class="btn btn-ghost" type="button" onclick="fluxResolveRow(this)" style="margin:6px 0 0; font-size:11px; padding:4px 12px;">🔍 استخراج من صفحة</button>
                         </div>
-                        <div style="flex:0 0 150px;">
-                            <label>حجمه (ميغابايت)</label>
-                            <input type="number" step="0.01" min="0" name="obb_size_mb" value="<?php echo $obbPre['size']; ?>">
+                        <div style="flex:0 0 120px;">
+                            <label>الحجم</label>
+                            <input type="number" step="0.01" min="0" name="obb_size" value="<?php echo $obbPre['size']; ?>">
                         </div>
-                        <div style="flex:0 0 150px;">
+                        <div style="flex:0 0 86px;">
+                            <label>الوحدة</label>
+                            <select name="obb_size_unit">
+                                <option <?php echo $obbPre['unit'] === 'KB' ? 'selected' : ''; ?>>KB</option>
+                                <option <?php echo $obbPre['unit'] === 'MB' ? 'selected' : ''; ?>>MB</option>
+                                <option <?php echo $obbPre['unit'] === 'GB' ? 'selected' : ''; ?>>GB</option>
+                            </select>
+                        </div>
+                        <div style="flex:0 0 130px;">
                             <label>رقم إصدار OBB</label>
                             <input type="number" min="0" name="obb_version_code" value="<?php echo $obbPre['vc']; ?>">
                         </div>
@@ -493,8 +662,8 @@ function e($v)
                 </form>
 
                 <script>
-                // صفوف Data المتكررة: رابط + حجم لكل صف، مع زر حذف وزر استخراج
-                function addDataRow(url, size) {
+                // صفوف Data المتكررة: رابط + حجم + وحدة لكل صف، مع زر حذف وزر استخراج
+                function addDataRow(url, size, unit) {
                     var wrap = document.getElementById('data-rows');
                     if (!wrap) return;
                     var div = document.createElement('div');
@@ -503,12 +672,17 @@ function e($v)
                     div.innerHTML =
                         '<div><label>رابط ملف Data إضافي — أو رابط صفحة مع الاستخراج</label><input type="url" name="data_url[]" value="' + url + '" placeholder="https://www.mediafire.com/file/xxxx/patch.zip/file">' +
                         '<button type="button" class="btn btn-ghost" onclick="fluxResolveRow(this)" style="margin:6px 0 0; font-size:11px; padding:4px 12px;">🔍 استخراج من صفحة</button></div>' +
-                        '<div style="flex:0 0 150px;"><label>حجمه (ميغابايت)</label><input type="number" step="0.01" min="0" name="data_size_mb[]" value="' + size + '"></div>' +
+                        '<div style="flex:0 0 120px;"><label>الحجم</label><input type="number" step="0.01" min="0" name="data_size[]" value="' + size + '"></div>' +
+                        '<div style="flex:0 0 86px;"><label>الوحدة</label><select name="data_size_unit[]">' +
+                        '<option' + (unit === 'KB' ? ' selected' : '') + '>KB</option>' +
+                        '<option' + (!unit || unit === 'MB' ? ' selected' : '') + '>MB</option>' +
+                        '<option' + (unit === 'GB' ? ' selected' : '') + '>GB</option>' +
+                        '</select></div>' +
                         '<div style="flex:0 0 52px; align-self:flex-end; padding-bottom:6px;"><button type="button" class="btn-danger" onclick="this.closest(\'.row\').remove()">حذف</button></div>';
                     wrap.appendChild(div);
                 }
                 <?php foreach ($dataPre as $dp) { ?>
-                addDataRow(<?php echo json_encode($dp['url']); ?>, <?php echo json_encode($dp['size']); ?>);
+                addDataRow(<?php echo json_encode($dp['url']); ?>, <?php echo json_encode($dp['size']); ?>, <?php echo json_encode($dp['unit']); ?>);
                 <?php } ?>
                 </script>
             </div>
@@ -576,9 +750,18 @@ function e($v)
                             <input type="url" name="file_url" required value="<?php echo $editFile ? e($editFile['url']) : ''; ?>">
                             <button class="btn btn-ghost" type="button" onclick="fluxResolveRow(this)" style="margin:6px 0 0; font-size:11px; padding:4px 12px;">🔍 استخراج من صفحة</button>
                         </div>
-                        <div style="flex:0 0 140px;">
-                            <label>الحجم (ميغابايت)</label>
-                            <input type="number" step="0.01" min="0" name="size_mb" value="<?php echo $editFile ? e(number_format($editFile['size'] / 1048576, 2, '.', '')) : ''; ?>">
+                        <div style="flex:0 0 120px;">
+                            <label>الحجم</label>
+                            <?php $fPre = $editFile ? flux_bytes_to_form($editFile['size']) : array('value' => '', 'unit' => 'MB'); ?>
+                            <input type="number" step="0.01" min="0" name="size_value" value="<?php echo $fPre['value']; ?>">
+                        </div>
+                        <div style="flex:0 0 86px;">
+                            <label>الوحدة</label>
+                            <select name="size_unit">
+                                <option <?php echo $fPre['unit'] === 'KB' ? 'selected' : ''; ?>>KB</option>
+                                <option <?php echo $fPre['unit'] === 'MB' ? 'selected' : ''; ?>>MB</option>
+                                <option <?php echo $fPre['unit'] === 'GB' ? 'selected' : ''; ?>>GB</option>
+                            </select>
                         </div>
                         <div style="flex:0 0 150px;">
                             <label>رقم إصدار OBB (لتسمية الملف)</label>
@@ -637,9 +820,66 @@ function e($v)
                 </div>
             </div>
             <?php } else { ?>
+
+            <?php if ($catPage) { ?>
+            <!-- ============ صفحة إدارة التصنيفات ============ -->
+            <div class="card">
+                <h2 style="font-size:16px; margin-bottom:4px;">إدارة التصنيفات</h2>
+                <p class="sub" style="margin-bottom:12px;">أضف تصنيفات جديدة، عدّل أسماءها، أو احذفها — تظهر في التطبيق والفلاتر فورًا.</p>
+                <a class="btn btn-ghost" href="admin.php" style="text-decoration:none; margin:0;">← رجوع لقائمة الألعاب</a>
+
+                <h3 style="font-size:14px; margin:16px 0 0;">إضافة تصنيف جديد</h3>
+                <form method="post" action="admin.php">
+                    <input type="hidden" name="action" value="add_category">
+                    <div class="row">
+                        <div>
+                            <label>الاسم المعروض *</label>
+                            <input type="text" name="name" required placeholder="مثال: رعب">
+                        </div>
+                        <div>
+                            <label>المعرف بالإنجليزية (اختياري)</label>
+                            <input type="text" name="slug" dir="ltr" placeholder="horror">
+                        </div>
+                        <div style="flex:0 0 150px; align-self:flex-end;">
+                            <button class="btn" type="submit" style="margin-top:0; width:100%;">إضافة التصنيف</button>
+                        </div>
+                    </div>
+                </form>
+
+                <h3 style="font-size:14px; margin:18px 0 8px;">التصنيفات الحالية (<?php echo count($catRows); ?>)</h3>
+                <div style="overflow-x:auto;">
+                <table>
+                    <tr>
+                        <th>الاسم</th>
+                        <th>المعرف</th>
+                        <th>إجراءات</th>
+                    </tr>
+                    <?php foreach ($catRows as $cr) { ?>
+                    <tr>
+                        <td>
+                            <form method="post" action="admin.php" style="display:flex; gap:8px; align-items:center;">
+                                <input type="hidden" name="action" value="update_category">
+                                <input type="hidden" name="category_id" value="<?php echo (int) $cr['id']; ?>">
+                                <input type="text" name="name" value="<?php echo e($cr['name']); ?>" style="max-width:220px;">
+                                <button class="btn-edit" type="submit" style="border:none; cursor:pointer;">حفظ الاسم</button>
+                        </td>
+                        <td style="direction:ltr; text-align:left; color:#26bbff;"><?php echo e($cr['slug']); ?></td>
+                        <td>
+                                <button class="btn-danger" type="submit" onclick="return confirm('حذف التصنيف «<?php echo e($cr['name']); ?>»؟ الألعاب المرتبطة به تبقى لكن بدون هذا التصنيف.');">حذف</button>
+                            </form>
+                        </td>
+                    </tr>
+                    <?php } ?>
+                </table>
+                </div>
+            </div>
+            <?php } else { ?>
             <!-- جدول الألعاب -->
             <div class="card">
                 <h2 style="font-size:16px; margin-bottom:12px;">الألعاب (<?php echo count($games); ?>)</h2>
+                <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">
+                    <a class="btn btn-ghost" href="admin.php?categories=1" style="text-decoration:none; margin:0;">🗂 إدارة التصنيفات</a>
+                </div>
                 <div style="overflow-x:auto;">
                 <table>
                     <tr>
@@ -665,7 +905,7 @@ function e($v)
                             <?php echo e($g['name']); ?>
                             <?php if ((int) $g['is_featured'] === 1) { ?> <span class="tag">مميزة</span><?php } ?>
                         </td>
-                        <td><?php echo isset($categories[$g['category']]) ? e($categories[$g['category']]) : e($g['category']); ?></td>
+                        <td><?php echo isset($gameCatsMap[(int) $g['id']]) ? e($gameCatsMap[(int) $g['id']]) : e($g['category']); ?></td>
                         <td>
                             <?php if ($price <= 0) { ?>
                                 <span class="tag tag-free">مجانية</span>
@@ -694,6 +934,7 @@ function e($v)
                 </div>
             </div>
             <?php } ?>
+            <?php } ?>
 
             <a class="btn btn-ghost" href="?logout=1" style="text-decoration:none;">تسجيل الخروج</a>
         <?php } ?>
@@ -719,14 +960,15 @@ function fluxResolveFetch(pageUrl) {
         .then(function (res) { return res.json(); });
 }
 
-// زر 🔍 داخل أي صف: يقرأ رابط الصفحة من حقل url في الصف نفسه ويملأ الرابط المباشر والحجم
+// زر 🔍 داخل أي صف: يقرأ رابط الصفحة من حقل url في الصف نفسه ويملأ الرابط المباشر والحجم والوحدة
 function fluxResolveRow(btn) {
     var row = btn.closest('.row');
     if (!row) return;
     var urlInput = row.querySelector('input[type="url"]');
     var sizeInput = row.querySelector('input[type="number"]');
+    var unitSelect = row.querySelector('select');
     if (!urlInput || !urlInput.value.trim()) {
-        alert('الصق رابط صفحة التحميل في الحقل أولًا (ميديافاير / درايف / صفحة فيها زر تحميل)');
+        alert('الصق رابط صفحة التحميل في الحقل أولًا (ميديافاير / modsfire / درايف / صفحة فيها زر تحميل)');
         return;
     }
     var oldText = btn.textContent;
@@ -736,7 +978,11 @@ function fluxResolveRow(btn) {
         btn.disabled = false;
         if (r && r.ok) {
             urlInput.value = r.direct_url;
-            if (sizeInput && r.size > 0) sizeInput.value = (r.size / 1048576).toFixed(2);
+            if (sizeInput && r.size > 0) {
+                var picked = fluxPickUnit(r.size);
+                sizeInput.value = picked.value;
+                if (unitSelect) unitSelect.value = picked.unit;
+            }
             btn.textContent = '✅ تم — ' + (r.size_text || 'الرابط جاهز');
             setTimeout(function () { btn.textContent = oldText; }, 3000);
         } else {
@@ -748,6 +994,102 @@ function fluxResolveRow(btn) {
         btn.textContent = oldText;
         alert('تعذر الاتصال بـ resolve.php — تأكد أن الملف مرفوع بجانب admin.php');
     });
+}
+
+// اختيار أقرب وحدة للبايتات مع القيمة المعروضة
+function fluxPickUnit(bytes) {
+    if (bytes >= 1073741824) return { value: (bytes / 1073741824).toFixed(2), unit: 'GB' };
+    if (bytes >= 1048576) return { value: (bytes / 1048576).toFixed(2), unit: 'MB' };
+    return { value: (bytes / 1024).toFixed(2), unit: 'KB' };
+}
+
+// ============ التعبئة التلقائية بالذكاء الاصطناعي ============
+// تستدعي ai.php: يكتب وصفًا كاملًا ويملأ كل الحقول الناقصة بنمط سوق أبِل
+function fluxAiFill(btn) {
+    var form = document.getElementById('game-form');
+    if (!form) return;
+    var nameInput = form.querySelector('input[name="name"]');
+    if (!nameInput || !nameInput.value.trim()) {
+        alert('اكتب اسم اللعبة أولًا ثم اضغط التعبئة الذكية');
+        nameInput.focus();
+        return;
+    }
+    var status = document.getElementById('ai-status');
+    btn.disabled = true;
+    btn.textContent = '🧠 جارٍ التوليد... قد يأخذ حتى دقيقة';
+    if (status) status.textContent = 'الذكاء الاصطناعي يكتب الوصف ويجمع بيانات اللعبة...';
+
+    var fd = new FormData();
+    fd.append('name', nameInput.value.trim());
+    fd.append('description', (form.querySelector('[name="description"]') || {}).value || '');
+    fd.append('developer', (form.querySelector('[name="developer"]') || {}).value || '');
+    fd.append('package_name', (form.querySelector('[name="package_name"]') || {}).value || '');
+    fd.append('download_version', (form.querySelector('[name="download_version"]') || {}).value || '');
+
+    fetch('ai.php', { method: 'POST', body: fd })
+        .then(function (res) { return res.json(); })
+        .then(function (r) {
+            btn.disabled = false;
+            btn.textContent = '🤖 تعبئة تلقائية بالذكاء الاصطناعي';
+            if (r && r.ok) {
+                var d = r.data || {};
+                var set = function (name, val) {
+                    if (val === null || val === undefined) return;
+                    var el = document.getElementById('f-' + name) || form.querySelector('[name="' + name + '"]');
+                    if (el && String(el.value).trim() === '') el.value = val;
+                };
+                // الوصف يُستبدل دائمًا (هذه هي الفكرة: وصف كامل جاهز)
+                if (d.description) {
+                    var desc = document.getElementById('f-description');
+                    if (desc) desc.value = d.description;
+                }
+                set('developer', d.developer);
+                set('package_name', d.package_name);
+                set('download_version', d.download_version);
+                if (d.rating) {
+                    var rt = document.getElementById('f-rating');
+                    if (rt) rt.value = d.rating;
+                }
+                if (d.release_date) {
+                    var rd = document.getElementById('f-release_date');
+                    if (rd && rd.value === '2024-01-01') rd.value = d.release_date;
+                }
+                if (d.last_updated) {
+                    var lu = document.getElementById('f-last_updated');
+                    if (lu) lu.value = d.last_updated;
+                }
+                // التصنيفات: أشّر المقترحة إذا لم يختر المستخدم شيئًا
+                if (d.categories && d.categories.length) {
+                    var anyChecked = Array.prototype.some.call(
+                        form.querySelectorAll('input[name="categories[]"]'),
+                        function (c) { return c.checked; }
+                    );
+                    if (!anyChecked) {
+                        Array.prototype.forEach.call(
+                            form.querySelectorAll('input[name="categories[]"]'),
+                            function (c) { c.checked = d.categories.indexOf(c.value) !== -1; }
+                        );
+                    }
+                }
+                if (status) {
+                    status.textContent = '✅ تمت التعبئة — راجع القيم ثم احفظ';
+                    status.style.color = '#2fbf71';
+                }
+            } else {
+                if (status) {
+                    status.textContent = '✗ ' + (r && r.note ? r.note : 'خطأ غير معروف');
+                    status.style.color = '#ff8a99';
+                }
+            }
+        })
+        .catch(function () {
+            btn.disabled = false;
+            btn.textContent = '🤖 تعبئة تلقائية بالذكاء الاصطناعي';
+            if (status) {
+                status.textContent = 'تعذر الاتصال بـ ai.php — تأكد من رفعه بجانب admin.php';
+                status.style.color = '#ff8a99';
+            }
+        });
 }
 
 // أداة بطاقة الاستخراج في صفحة الملفات: عرض النتيجة كاملة قبل استخدامها
@@ -792,18 +1134,23 @@ function fluxResolvePage() {
     });
 }
 
-// زر "استخدمه في نموذج الملف": يملأ الرابط المباشر + الحجم + الاسم + رابط المصدر
+// زر "استخدمه في نموذج الملف": يملأ الرابط المباشر + الحجم + الوحدة + الاسم + رابط المصدر
 function fluxUseResult() {
     var direct = document.getElementById('resolve-direct');
     if (!direct || !direct.value) return;
     var form = document.getElementById('file-form');
     if (!form) return;
     var urlInput = form.querySelector('input[name="file_url"]');
-    var sizeInput = form.querySelector('input[name="size_mb"]');
+    var sizeInput = form.querySelector('input[name="size_value"]');
+    var unitSelect = form.querySelector('select[name="size_unit"]');
     var nameInput = form.querySelector('input[name="file_name"]');
     var srcInput = document.getElementById('source-url');
     if (urlInput) urlInput.value = direct.value;
-    if (sizeInput && window._fluxResolvedSize > 0) sizeInput.value = (window._fluxResolvedSize / 1048576).toFixed(2);
+    if (sizeInput && window._fluxResolvedSize > 0) {
+        var picked = fluxPickUnit(window._fluxResolvedSize);
+        sizeInput.value = picked.value;
+        if (unitSelect) unitSelect.value = picked.unit;
+    }
     if (nameInput && window._fluxResolvedName && nameInput.value.trim() === '') nameInput.value = window._fluxResolvedName;
     if (srcInput) srcInput.value = document.getElementById('resolve-url').value.trim();
     form.scrollIntoView({ behavior: 'smooth', block: 'center' });

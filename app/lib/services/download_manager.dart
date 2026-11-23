@@ -460,19 +460,26 @@ class DownloadManager extends ChangeNotifier with WidgetsBindingObserver {
 
   /// فتح مثبّت أندرويد ("هل تريد تثبيت هذا التطبيق؟") لملف APK المنزّل —
   /// نفس نافذة التثبيت التي يفتحها Epic Games بعد اكتمال التحميل.
+  /// ذاتي الإصلاح: إذا الملف غير موجود بالمسار المحفوظ نبحث عنه فعليًا
+  /// في مجلد FluxGames/<المعرف>/ وأي مسار محسوب من جديد (يتعافى بعد
+  /// تحديث التطبيق أو تغيّر المسارات) قبل إعلان الفشل.
   /// يعيد true إذا فُتحت النافذة فعليًا.
   Future<bool> openInstaller(int gameId) async {
     if (!Platform.isAndroid) return false;
     final DownloadTask? t = _tasks[gameId];
     if (t == null || t.state != DownloadTaskState.completed) return false;
-    for (final FileTask f in t.files) {
-      if (f.file.type != 'apk' || f.localPath == null) continue;
-      final File apk = File(f.localPath!);
-      if (!apk.existsSync() || apk.lengthSync() <= 0) continue;
+    final File apk = _findApk(t);
+    if (apk.existsSync() && apk.lengthSync() > 0) {
+      // صحّح المسار المحفوظ إن اختلف (شفاء ذاتي دائم)
+      final FileTask? apkTask = _apkTaskOf(t);
+      if (apkTask != null && apkTask.localPath != apk.path) {
+        apkTask.localPath = apk.path;
+        await _persist();
+      }
       try {
         final bool? ok = await _bgChannel.invokeMethod<bool>(
           'installApk',
-          <String, dynamic>{'path': f.localPath},
+          <String, dynamic>{'path': apk.path},
         );
         return ok ?? false;
       } catch (_) {
@@ -480,6 +487,83 @@ class DownloadManager extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
     return false;
+  }
+
+  /// مهمة ملف الـ APK داخل المهمة.
+  FileTask? _apkTaskOf(DownloadTask t) {
+    for (final FileTask f in t.files) {
+      if (f.file.type == 'apk') return f;
+    }
+    return null;
+  }
+
+  /// إيجاد ملف APK الفعلي: المسار المحفوظ أولًا، ثم مسح مجلد FluxGames
+  /// للمهمة، ثم إعادة حساب المسار من جديد — الأحدث والأكبر يفوز.
+  File _findApk(DownloadTask t) {
+    final FileTask? ft = _apkTaskOf(t);
+    if (ft != null && ft.localPath != null) {
+      final File f = File(ft.localPath!);
+      if (f.existsSync() && f.lengthSync() > 0) return f;
+    }
+    final candidates = <File>[];
+    // 1) مجلد التطبيق المخصص للألعاب (مكان الحفظ الافتراضي)
+    try {
+      final Directory? ext = _lastExternalDir;
+      if (ext != null) {
+        final Directory d = Directory('${ext.path}/FluxGames/${t.game.id}');
+        if (d.existsSync()) {
+          for (final FileSystemEntity e in d.listSync()) {
+            if (e is File &&
+                e.path.toLowerCase().endsWith('.apk') &&
+                e.lengthSync() > 0) {
+              candidates.add(e);
+            }
+          }
+        }
+      }
+    } catch (_) {}
+    // 2) المسار المعاد حسابه (مثلًا بعد تغيّر مجلد التطبيق بعد تحديث)
+    if (ft != null) {
+      try {
+        final String recomputed = _resolvePathSync(t.game, ft.file);
+        if (recomputed.isNotEmpty) {
+          final File f = File(recomputed);
+          if (f.existsSync() && f.lengthSync() > 0) candidates.add(f);
+        }
+      } catch (_) {}
+    }
+    if (candidates.isEmpty) {
+      return File(ft?.localPath ?? '');
+    }
+    // الأحدث يفوز
+    candidates.sort((a, b) =>
+        b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+    return candidates.first;
+  }
+
+  /// آخر مجلد خارجي معروف (يُخزّن من _appGamesDir للوصول المتزامن لاحقًا).
+  Directory? _lastExternalDir;
+
+  /// حساب مسار ملف بشكل متزامن (بدون await) — يُستخدم للشفاء الذاتي.
+  String _resolvePathSync(Game game, DownloadFile f) {
+    final String pkg = game.packageName.isNotEmpty
+        ? game.packageName
+        : (game.download?.packageName.isNotEmpty ?? false
+            ? game.download!.packageName
+            : 'com.fluxstore.games');
+    String fileName;
+    if (f.isObb) {
+      final int vc =
+          f.versionCode > 0 ? f.versionCode : (game.download?.versionCode ?? 0);
+      fileName = 'main.${vc > 0 ? vc : 1}.$pkg.obb';
+    } else {
+      fileName = _fileNameFromUrl(f.url);
+      if (fileName.isEmpty) fileName = 'file_${f.id}.bin';
+    }
+    if (f.isApk && _lastExternalDir != null) {
+      return '${_lastExternalDir.path}/FluxGames/${game.id}/$fileName';
+    }
+    return '';
   }
 
   /// هل اللعبة مثبتة على الجهاز؟ (فحص حقيقي عبر PackageManager)
@@ -566,12 +650,15 @@ class DownloadManager extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   /// المسار الصحيح النهائي للملف داخل مجلدات النظام (نفس منطق _resolvePath).
+  /// باكج نيم اللعبة مفقود؟ نعيد نصًا فارغًا — لا ننقل OBB إلى مكان خاطئ
+  /// (المسار يُحدد بعد ضبط الباكج نيم من لوحة الإدارة أو التعبئة الذكية).
   String _properTargetPath(Game game, DownloadFile f) {
     final String pkg = game.packageName.isNotEmpty
         ? game.packageName
         : (game.download?.packageName.isNotEmpty ?? false
             ? game.download!.packageName
-            : 'com.fluxstore.games');
+            : '');
+    if (pkg.isEmpty) return '';
     if (f.isObb) {
       final int vc = f.versionCode > 0
           ? f.versionCode
@@ -865,31 +952,32 @@ class DownloadManager extends ChangeNotifier with WidgetsBindingObserver {
   // ---------- المسارات: OBB/Data في مكانها الصحيح تلقائيًا ----------
 
   /// حساب المسار المحلي لكل ملف:
-  /// - OBB ← /storage/emulated/0/Android/obb/<الحزمة>/main.<إصدار>.<الحزمة>.obb
+  /// - OBB ← /storage/emulated/0/Android/obb/<الحزمة>/main.<رقم الإصدار>.<الحزمة>.obb
   /// - Data ← /storage/emulated/0/Android/data/<الحزمة>/files/<الملف>
   /// - APK ← مجلد التطبيق FluxGames/<المعرف>/
-  /// إن رفض أندرويد الكتابة المباشرة (أندرويد 11+) نستخدم مجلد التطبيق البديل.
+  /// باكج نيم اللعبة مفقود؟ نحفظ في مجلد التطبيق مباشرة (لا مكان خاطئ) —
+  /// والنقل يصير تلقائيًا بعد ضبط الباكج نيم من اللوحة.
   Future<String> _resolvePath(Game game, DownloadFile f) async {
     final String pkg = game.packageName.isNotEmpty
         ? game.packageName
         : (game.download?.packageName.isNotEmpty ?? false
             ? game.download!.packageName
-            : 'com.fluxstore.games');
+            : '');
 
     String fileName;
     if (f.isObb) {
       final int vc = f.versionCode > 0
           ? f.versionCode
           : (game.download?.versionCode ?? 0);
-      fileName = 'main.${vc > 0 ? vc : 1}.$pkg.obb';
+      fileName = 'main.${vc > 0 ? vc : 1}.${pkg.isNotEmpty ? pkg : 'pending'}.obb';
     } else {
       fileName = _fileNameFromUrl(f.url);
       if (fileName.isEmpty) fileName = 'file_${f.id}.bin';
     }
 
     final List<String> preferred = <String>[
-      if (f.isObb) '/storage/emulated/0/Android/obb/$pkg',
-      if (f.isData) '/storage/emulated/0/Android/data/$pkg/files',
+      if (f.isObb && pkg.isNotEmpty) '/storage/emulated/0/Android/obb/$pkg',
+      if (f.isData && pkg.isNotEmpty) '/storage/emulated/0/Android/data/$pkg/files',
     ];
     for (final String dir in preferred) {
       if (_canWriteSync(dir)) return '$dir/$fileName';
@@ -918,6 +1006,7 @@ class DownloadManager extends ChangeNotifier with WidgetsBindingObserver {
     try {
       final Directory? ext = await getExternalStorageDirectory();
       base = ext?.path ?? (await getApplicationDocumentsDirectory()).path;
+      _lastExternalDir = ext; // نحفظه للبحث المتزامن في المثبّت الذاتي
     } catch (_) {
       base = (await getApplicationDocumentsDirectory()).path;
     }
