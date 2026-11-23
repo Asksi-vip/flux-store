@@ -560,8 +560,9 @@ class DownloadManager extends ChangeNotifier with WidgetsBindingObserver {
       fileName = _fileNameFromUrl(f.url);
       if (fileName.isEmpty) fileName = 'file_${f.id}.bin';
     }
-    if (f.isApk && _lastExternalDir != null) {
-      return '${_lastExternalDir.path}/FluxGames/${game.id}/$fileName';
+    final Directory? extDir = _lastExternalDir;
+    if (f.isApk && extDir != null) {
+      return '${extDir.path}/FluxGames/${game.id}/$fileName';
     }
     return '';
   }

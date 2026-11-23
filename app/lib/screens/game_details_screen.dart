@@ -553,9 +553,9 @@ class _GameDetailsScreenState extends State<GameDetailsScreen> {
 
   /// شرائح التصنيفات المتعددة — احتياطيًا التصنيف الأساسي.
   Widget _categoriesChips() {
-    final List<String> names = game.categoriesDisplay.isNotEmpty
-        ? game.categoriesDisplay
-        : (game.categoryDisplay.isNotEmpty ? <String>[game.categoryDisplay] : <String>[]);
+    final List<String> names = widget.game.categoriesDisplay.isNotEmpty
+        ? widget.game.categoriesDisplay
+        : (widget.game.categoryDisplay.isNotEmpty ? <String>[widget.game.categoryDisplay] : <String>[]);
     if (names.isEmpty) return const SizedBox.shrink();
     return Wrap(
       spacing: 8,
@@ -585,11 +585,11 @@ class _GameDetailsScreenState extends State<GameDetailsScreen> {
 
   /// هل توجد صفوف معلومات كافية للعرض؟
   bool _hasInfoRows() =>
-      game.developer.isNotEmpty ||
-      game.releaseDate.isNotEmpty ||
-      game.lastUpdated.isNotEmpty ||
-      game.packageName.isNotEmpty ||
-      (game.download?.version.isNotEmpty ?? false);
+      widget.game.developer.isNotEmpty ||
+      widget.game.releaseDate.isNotEmpty ||
+      widget.game.lastUpdated.isNotEmpty ||
+      widget.game.packageName.isNotEmpty ||
+      (widget.game.download?.version.isNotEmpty ?? false);
 
   /// صف بطاقة المعلومات.
   static Widget _infoRow(String label, String value, {bool last = false}) {
@@ -636,13 +636,13 @@ class _GameDetailsScreenState extends State<GameDetailsScreen> {
       items.add(MapEntry<String, String>(label, value));
     }
 
-    add('المطوّر', game.developer);
-    add('تاريخ الإصدار', _fmtDate(game.releaseDate));
-    add('آخر تحديث', _fmtDate(game.lastUpdated));
-    if (game.download != null && game.download!.version.isNotEmpty) {
-      add('الإصدار', game.download!.version);
+    add('المطوّر', widget.game.developer);
+    add('تاريخ الإصدار', _fmtDate(widget.game.releaseDate));
+    add('آخر تحديث', _fmtDate(widget.game.lastUpdated));
+    if (widget.game.download != null && widget.game.download!.version.isNotEmpty) {
+      add('الإصدار', widget.game.download!.version);
     }
-    add('الحزمة', game.packageName);
+    add('الحزمة', widget.game.packageName);
 
     return List<Widget>.generate(items.length, (int i) {
       return _infoRow(items[i].key, items[i].value, last: i == items.length - 1);
