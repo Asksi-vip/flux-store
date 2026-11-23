@@ -72,9 +72,13 @@ jobs:
                   a_txt += "\napply plugin: 'com.google.gms.google-services'\n"
               # ضبط applicationId على com.fluxstore.app ليتطابق مع Firebase
               a_txt = re.sub(r'applicationId\s*=?\s*["\'][^"\']+["\']', 'applicationId = "com.fluxstore.app"', a_txt)
-              # ضبط minSdkVersion ليكون 23 على الأقل لمتطلبات Firebase Auth
-              a_txt = re.sub(r'minSdkVersion\s*=?\s*([^\n\r]+)', 'minSdkVersion = 23', a_txt)
-              a_txt = re.sub(r'minSdkVersion\s+\d+', 'minSdkVersion 23', a_txt)
+              # ضبط minSdk ليكون 23 على الأقل لمتطلبات Firebase Auth —
+              # AGP 8 رفض minSdkVersion = 23 (الخاصية القديمة صارت نهائية):
+              # الصيغة الصحيحة هي minSdk = 23، والنمط يغطي قالب flutter بأشكاله
+              # (minSdkVersion flutter.minSdkVersion أو minSdk = flutter.minSdkVersion)
+              a_txt = re.sub(r'minSdk(?:Version)?\s*=?\s*(?:flutter\.minSdkVersion|\d+)', 'minSdk = 23', a_txt)
+              if "minSdk" not in a_txt:
+                  a_txt = a_txt.replace("defaultConfig {", "defaultConfig {\n        minSdk = 23", 1)
               # تفعيل MultiDex
               if "multiDexEnabled" not in a_txt:
                   a_txt = a_txt.replace("defaultConfig {", "defaultConfig {\n        multiDexEnabled true", 1)
