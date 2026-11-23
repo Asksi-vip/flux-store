@@ -8,6 +8,8 @@
 session_start();
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/db.php';
+// مستخرج الرابط المباشر (ميديافاير / جوجل درايف / صفحات التحميل)
+require_once __DIR__ . '/resolve.php';
 
 header('Content-Type: text/html; charset=utf-8');
 
@@ -105,13 +107,22 @@ if ($logged && $pdo !== null && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($
                 }
                 if (!empty($files)) {
                     // النموذج هو مصدر الحقيقة: يعيد بناء قائمة الملفات كاملة
+                    // لكن نحافظ على رابط الصفحة المصدر للملفات التي لم يتغير رابطها المباشر
+                    $oldSrc = array();
+                    $stmt = $pdo->prepare('SELECT url, source_url, resolved_at FROM game_files WHERE game_id = :id');
+                    $stmt->execute(array(':id' => $gid));
+                    foreach ($stmt->fetchAll() as $of) {
+                        $oldSrc[$of['url']] = $of;
+                    }
                     $pdo->prepare('DELETE FROM game_files WHERE game_id = :id')
                         ->execute(array(':id' => $gid));
                     $ins = $pdo->prepare(
-                        'INSERT INTO game_files (game_id, name, url, type, size, version_code)
-                         VALUES (:gid, :name, :url, :type, :size, :vc)'
+                        'INSERT INTO game_files (game_id, name, url, type, size, version_code, source_url, resolved_at)
+                         VALUES (:gid, :name, :url, :type, :size, :vc, :src, :rs)'
                     );
                     foreach ($files as $f) {
+                        $src = isset($oldSrc[$f['url']]) ? $oldSrc[$f['url']]['source_url'] : '';
+                        $rs  = isset($oldSrc[$f['url']]) ? $oldSrc[$f['url']]['resolved_at'] : '';
                         $ins->execute(array(
                             ':gid'  => $gid,
                             ':name' => $f['name'],
@@ -119,6 +130,8 @@ if ($logged && $pdo !== null && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($
                             ':type' => $f['type'],
                             ':size' => $f['size'],
                             ':vc'   => $f['version_code'],
+                            ':src'  => $src,
+                            ':rs'   => $rs,
                         ));
                     }
                     $msg .= ' — وتم حفظ ' . count($files) . ' ملف تحميل';
@@ -160,13 +173,17 @@ if ($logged && $pdo !== null && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($
             if ($fName === '') {
                 $fName = $type === 'apk' ? 'ملف تثبيت اللعبة APK' : ($type === 'obb' ? 'ملف البيانات OBB' : 'ملفات إضافية Data');
             }
+            // رابط صفحة المصدر (يأتي من أداة الاستخراج عند استخدامها) + وقت الاستخراج
+            $fSource = trim((string) (isset($_POST['source_url']) ? $_POST['source_url'] : ''));
+            $fResolved = $fSource !== '' ? date('Y-m-d H:i:s') : '';
+
             if ($fid > 0) {
-                $stmt = $pdo->prepare('UPDATE game_files SET name = :name, url = :url, type = :type, size = :size, version_code = :vc WHERE id = :id');
-                $stmt->execute(array(':name' => $fName, ':url' => $fUrl, ':type' => $type, ':size' => $fSize, ':vc' => $fVc, ':id' => $fid));
+                $stmt = $pdo->prepare('UPDATE game_files SET name = :name, url = :url, type = :type, size = :size, version_code = :vc, source_url = :src, resolved_at = :rs WHERE id = :id');
+                $stmt->execute(array(':name' => $fName, ':url' => $fUrl, ':type' => $type, ':size' => $fSize, ':vc' => $fVc, ':src' => $fSource, ':rs' => $fResolved, ':id' => $fid));
                 $msg = 'تم تحديث الملف';
             } else {
-                $stmt = $pdo->prepare('INSERT INTO game_files (game_id, name, url, type, size, version_code) VALUES (:gid, :name, :url, :type, :size, :vc)');
-                $stmt->execute(array(':gid' => $gid, ':name' => $fName, ':url' => $fUrl, ':type' => $type, ':size' => $fSize, ':vc' => $fVc));
+                $stmt = $pdo->prepare('INSERT INTO game_files (game_id, name, url, type, size, version_code, source_url, resolved_at) VALUES (:gid, :name, :url, :type, :size, :vc, :src, :rs)');
+                $stmt->execute(array(':gid' => $gid, ':name' => $fName, ':url' => $fUrl, ':type' => $type, ':size' => $fSize, ':vc' => $fVc, ':src' => $fSource, ':rs' => $fResolved));
                 $msg = 'تمت إضافة الملف';
             }
             header('Location: admin.php?files=' . $gid . '&msg=' . urlencode($msg));
@@ -184,11 +201,47 @@ if ($logged && $pdo !== null && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($
         header('Location: admin.php?files=' . $gid . '&msg=' . urlencode('تم حذف الملف'));
         exit;
     }
+
+    // ---------- إعادة استخراج الرابط المباشر من صفحة المصدر المحفوظة ----------
+    if ($action === 'refresh_file') {
+        $fid = (int) (isset($_POST['file_id']) ? $_POST['file_id'] : 0);
+        $gid = (int) (isset($_POST['game_id']) ? $_POST['game_id'] : 0);
+        if ($fid > 0) {
+            $stmt = $pdo->prepare('SELECT * FROM game_files WHERE id = :id');
+            $stmt->execute(array(':id' => $fid));
+            $row = $stmt->fetch();
+            if ($row && trim((string) $row['source_url']) !== '') {
+                $res = flux_resolve_link((string) $row['source_url']);
+                if (!empty($res['ok'])) {
+                    $newSize = (int) $res['size'] > 0 ? (int) $res['size'] : (int) $row['size'];
+                    $stmt = $pdo->prepare(
+                        "UPDATE game_files SET url = :url, size = :size,
+                         resolved_at = datetime('now') WHERE id = :id"
+                    );
+                    $stmt->execute(array(':url' => $res['direct_url'], ':size' => $newSize, ':id' => $fid));
+                    $note = 'تم تحديث الرابط المباشر';
+                    if ((int) $res['size'] > 0) {
+                        $note .= ' — الحجم ' . ($res['size_text'] !== '' ? $res['size_text'] : (string) $res['size'] . ' بايت');
+                    }
+                    header('Location: admin.php?files=' . $gid . '&msg=' . urlencode($note));
+                    exit;
+                }
+                header('Location: admin.php?files=' . $gid . '&err=' . urlencode('فشل إعادة الاستخراج: ' . (isset($res['note']) ? $res['note'] : 'خطأ غير معروف')));
+                exit;
+            }
+        }
+        header('Location: admin.php?files=' . $gid . '&err=' . urlencode('الملف لا يملك رابط صفحة مصدر محفوظ'));
+        exit;
+    }
 }
 
 // رسالة نجاح بعد إعادة التوجيه
 if (isset($_GET['msg'])) {
     $msg = (string) $_GET['msg'];
+}
+// رسالة خطأ بعد إعادة التوجيه (مثل فشل إعادة استخراج الرابط)
+if (isset($_GET['err'])) {
+    $error = (string) $_GET['err'];
 }
 
 // لعبة قيد التعديل
@@ -403,8 +456,9 @@ function e($v)
                     <p class="sub" style="margin:0 0 10px;">حزمة أندرويد (لمسارات OBB/Data) تشتق تلقائيًا من الرابط — لا تحتاج إدخالها. حفظ النموذج مع أي رابط يعيد بناء قائمة الملفات كاملة.</p>
                     <div class="row">
                         <div>
-                            <label>رابط ملف APK الأساسي</label>
-                            <input type="url" name="apk_url" value="<?php echo $apkPre['url']; ?>" placeholder="https://site.com/com.example.game/files/game.apk">
+                            <label>رابط ملف APK الأساسي <span style="color:#2fbf71;">— أو رابط صفحة التحميل ثم اضغط الاستخراج</span></label>
+                            <input type="url" name="apk_url" value="<?php echo $apkPre['url']; ?>" placeholder="https://www.mediafire.com/file/xxxx/game.apk/file">
+                            <button class="btn btn-ghost" type="button" onclick="fluxResolveRow(this)" style="margin:6px 0 0; font-size:11px; padding:4px 12px;">🔍 استخراج من صفحة</button>
                         </div>
                         <div style="flex:0 0 150px;">
                             <label>حجمه (ميغابايت)</label>
@@ -413,8 +467,9 @@ function e($v)
                     </div>
                     <div class="row">
                         <div>
-                            <label>رابط ملف OBB (إن وجد)</label>
+                            <label>رابط ملف OBB (إن وجد) — يقبل رابط صفحة مع الاستخراج</label>
                             <input type="url" name="obb_url" value="<?php echo $obbPre['url']; ?>" placeholder="https://site.com/main.120.com.example.game.obb">
+                            <button class="btn btn-ghost" type="button" onclick="fluxResolveRow(this)" style="margin:6px 0 0; font-size:11px; padding:4px 12px;">🔍 استخراج من صفحة</button>
                         </div>
                         <div style="flex:0 0 150px;">
                             <label>حجمه (ميغابايت)</label>
@@ -438,7 +493,7 @@ function e($v)
                 </form>
 
                 <script>
-                // صفوف Data المتكررة: رابط + حجم لكل صف، مع زر حذف
+                // صفوف Data المتكررة: رابط + حجم لكل صف، مع زر حذف وزر استخراج
                 function addDataRow(url, size) {
                     var wrap = document.getElementById('data-rows');
                     if (!wrap) return;
@@ -446,7 +501,8 @@ function e($v)
                     div.className = 'row';
                     div.style.marginTop = '8px';
                     div.innerHTML =
-                        '<div><label>رابط ملف Data إضافي</label><input type="url" name="data_url[]" value="' + url + '" placeholder="https://site.com/patch.zip"></div>' +
+                        '<div><label>رابط ملف Data إضافي — أو رابط صفحة مع الاستخراج</label><input type="url" name="data_url[]" value="' + url + '" placeholder="https://www.mediafire.com/file/xxxx/patch.zip/file">' +
+                        '<button type="button" class="btn btn-ghost" onclick="fluxResolveRow(this)" style="margin:6px 0 0; font-size:11px; padding:4px 12px;">🔍 استخراج من صفحة</button></div>' +
                         '<div style="flex:0 0 150px;"><label>حجمه (ميغابايت)</label><input type="number" step="0.01" min="0" name="data_size_mb[]" value="' + size + '"></div>' +
                         '<div style="flex:0 0 52px; align-self:flex-end; padding-bottom:6px;"><button type="button" class="btn-danger" onclick="this.closest(\'.row\').remove()">حذف</button></div>';
                     wrap.appendChild(div);
@@ -465,11 +521,43 @@ function e($v)
                 <p class="sub" style="margin-bottom:12px;">أول ملف APK = ملف اللعبة الرئيسي، وملفات OBB/Data تُحسب مسارات تثبيتها تلقائيًا حسب حزمة اللعبة.</p>
                 <a class="btn btn-ghost" href="admin.php" style="text-decoration:none; margin:0;">← رجوع لقائمة الألعاب</a>
 
+                <!-- ============ أداة استخراج الرابط المباشر (مثل سحب رابط التحميل من الصفحة) ============ -->
+                <div style="background:#101014; border:1px solid #2a2a2a; border-radius:6px; padding:16px; margin-top:16px;">
+                    <h3 style="font-size:14px; margin-bottom:4px; color:#2fbf71;">🔗 استخراج رابط التحميل المباشر</h3>
+                    <p class="sub" style="margin:0 0 10px;">الصق رابط صفحة التحميل (ميديافاير، جوجل درايف، أو أي صفحة فيها زر تحميل) — يطلّع لك الرابط المباشر مع الاسم والحجم، وبضغطة تحطه بنموذج الملف تحت مباشرة.</p>
+                    <div class="row">
+                        <div>
+                            <input type="url" id="resolve-url" placeholder="https://www.mediafire.com/file/xxxx/game.apk/file">
+                        </div>
+                        <div style="flex:0 0 190px;">
+                            <button class="btn" type="button" id="resolve-btn" onclick="fluxResolvePage()" style="margin-top:0; width:100%;">استخراج الرابط المباشر</button>
+                        </div>
+                    </div>
+                    <div id="resolve-status" style="font-size:12.5px; margin-top:10px; color:#b8b8c1;"></div>
+                    <div id="resolve-result" style="display:none; margin-top:12px;">
+                        <label style="margin-top:0;">الرابط المباشر المستخرج</label>
+                        <input type="text" id="resolve-direct" readonly style="direction:ltr; text-align:left; color:#26bbff;">
+                        <div class="row" style="margin-top:10px;">
+                            <div style="flex:1 1 200px;">
+                                <span style="font-size:12px; color:#b8b8c1;">الاسم: </span><span id="resolve-name" style="font-size:12.5px; direction:ltr; unicode-bidi:embed;"></span>
+                            </div>
+                            <div style="flex:0 0 120px;">
+                                <span style="font-size:12px; color:#b8b8c1;">الحجم: </span><span id="resolve-size" style="font-size:12.5px;"></span>
+                            </div>
+                            <div style="flex:0 0 140px;">
+                                <span style="font-size:12px; color:#b8b8c1;">المصدر: </span><span id="resolve-source" style="font-size:12.5px;"></span>
+                            </div>
+                        </div>
+                        <button class="btn" type="button" onclick="fluxUseResult()" style="margin-top:14px;">استخدمه في نموذج الملف تحت ⬇</button>
+                    </div>
+                </div>
+
                 <h3 style="font-size:14px; margin:18px 0 8px;"><?php echo $editFile ? 'تعديل الملف' : 'إضافة ملف تحميل'; ?></h3>
-                <form method="post" action="admin.php">
+                <form method="post" action="admin.php" id="file-form">
                     <input type="hidden" name="action" value="save_file">
                     <input type="hidden" name="game_id" value="<?php echo (int) $filesGame['id']; ?>">
                     <input type="hidden" name="file_id" value="<?php echo $editFile ? (int) $editFile['id'] : 0; ?>">
+                    <input type="hidden" name="source_url" id="source-url" value="">
                     <div class="row">
                         <div style="flex:0 0 110px;">
                             <label>النوع *</label>
@@ -484,8 +572,9 @@ function e($v)
                             <input type="text" name="file_name" value="<?php echo $editFile ? e($editFile['name']) : ''; ?>">
                         </div>
                         <div>
-                            <label>رابط التحميل المباشر *</label>
+                            <label>رابط التحميل المباشر * <span style="color:#2fbf71;">— أو رابط صفحة ثم استخرج</span></label>
                             <input type="url" name="file_url" required value="<?php echo $editFile ? e($editFile['url']) : ''; ?>">
+                            <button class="btn btn-ghost" type="button" onclick="fluxResolveRow(this)" style="margin:6px 0 0; font-size:11px; padding:4px 12px;">🔍 استخراج من صفحة</button>
                         </div>
                         <div style="flex:0 0 140px;">
                             <label>الحجم (ميغابايت)</label>
@@ -523,6 +612,14 @@ function e($v)
                         <td>
                             <div class="actions">
                                 <a class="btn-edit" href="admin.php?files=<?php echo (int) $filesGame['id']; ?>&edit_file=<?php echo (int) $f['id']; ?>">تعديل</a>
+                                <?php if (trim((string) $f['source_url']) !== '') { ?>
+                                <form method="post" action="admin.php" onsubmit="return confirm('إعادة استخراج الرابط المباشر من صفحة المصدر المحفوظة؟');">
+                                    <input type="hidden" name="action" value="refresh_file">
+                                    <input type="hidden" name="file_id" value="<?php echo (int) $f['id']; ?>">
+                                    <input type="hidden" name="game_id" value="<?php echo (int) $filesGame['id']; ?>">
+                                    <button class="btn-edit" type="submit" style="color:#2fbf71;" title="المصدر: <?php echo e($f['source_url']); ?><?php echo $f['resolved_at'] !== '' ? ' — آخر استخراج: ' . e($f['resolved_at']) : ''; ?>">تحديث الرابط</button>
+                                </form>
+                                <?php } ?>
                                 <form method="post" action="admin.php" onsubmit="return confirm('حذف هذا الملف؟');">
                                     <input type="hidden" name="action" value="delete_file">
                                     <input type="hidden" name="file_id" value="<?php echo (int) $f['id']; ?>">
@@ -602,5 +699,119 @@ function e($v)
         <?php } ?>
     <?php } ?>
 </div>
+
+<script>
+// ============ محرك استخراج الرابط المباشر (واجهة admin.php) ============
+// الاتصال بـ resolve.php — الجلسة نفسها محمية، والنتيجة JSON
+
+function fluxFmtSize(bytes) {
+    if (!bytes || bytes <= 0) return '';
+    var u = ['B', 'KB', 'MB', 'GB'];
+    var v = bytes, i = 0;
+    while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+    return (i === 0 || v >= 100 ? Math.round(v) : Math.round(v * 10) / 10) + ' ' + u[i];
+}
+
+function fluxResolveFetch(pageUrl) {
+    var fd = new FormData();
+    fd.append('url', pageUrl);
+    return fetch('resolve.php', { method: 'POST', body: fd })
+        .then(function (res) { return res.json(); });
+}
+
+// زر 🔍 داخل أي صف: يقرأ رابط الصفحة من حقل url في الصف نفسه ويملأ الرابط المباشر والحجم
+function fluxResolveRow(btn) {
+    var row = btn.closest('.row');
+    if (!row) return;
+    var urlInput = row.querySelector('input[type="url"]');
+    var sizeInput = row.querySelector('input[type="number"]');
+    if (!urlInput || !urlInput.value.trim()) {
+        alert('الصق رابط صفحة التحميل في الحقل أولًا (ميديافاير / درايف / صفحة فيها زر تحميل)');
+        return;
+    }
+    var oldText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '⏳ جارٍ سحب الرابط المباشر...';
+    fluxResolveFetch(urlInput.value.trim()).then(function (r) {
+        btn.disabled = false;
+        if (r && r.ok) {
+            urlInput.value = r.direct_url;
+            if (sizeInput && r.size > 0) sizeInput.value = (r.size / 1048576).toFixed(2);
+            btn.textContent = '✅ تم — ' + (r.size_text || 'الرابط جاهز');
+            setTimeout(function () { btn.textContent = oldText; }, 3000);
+        } else {
+            btn.textContent = oldText;
+            alert('فشل الاستخراج: ' + (r && r.note ? r.note : 'خطأ غير معروف'));
+        }
+    }).catch(function (e) {
+        btn.disabled = false;
+        btn.textContent = oldText;
+        alert('تعذر الاتصال بـ resolve.php — تأكد أن الملف مرفوع بجانب admin.php');
+    });
+}
+
+// أداة بطاقة الاستخراج في صفحة الملفات: عرض النتيجة كاملة قبل استخدامها
+function fluxResolvePage() {
+    var input = document.getElementById('resolve-url');
+    var status = document.getElementById('resolve-status');
+    var result = document.getElementById('resolve-result');
+    if (!input || !input.value.trim()) {
+        status.textContent = 'الصق رابط صفحة التحميل أولًا';
+        status.style.color = '#ff8a99';
+        return;
+    }
+    var btn = document.getElementById('resolve-btn');
+    btn.disabled = true;
+    btn.textContent = '⏳ جارٍ التحليل...';
+    status.textContent = 'نفتح الصفحة ونبحث عن زر التحميل المباشر... قد يأخذ ثوانٍ';
+    status.style.color = '#b8b8c1';
+    result.style.display = 'none';
+
+    fluxResolveFetch(input.value.trim()).then(function (r) {
+        btn.disabled = false;
+        btn.textContent = 'استخراج الرابط المباشر';
+        if (r && r.ok) {
+            status.textContent = '✅ تم الاستخراج بنجاح';
+            status.style.color = '#2fbf71';
+            document.getElementById('resolve-direct').value = r.direct_url;
+            document.getElementById('resolve-name').textContent = r.file_name || '—';
+            document.getElementById('resolve-size').textContent = r.size_text || (r.size > 0 ? fluxFmtSize(r.size) : 'غير معروف');
+            document.getElementById('resolve-source').textContent = r.source || '—';
+            window._fluxResolvedSize = r.size || 0;
+            window._fluxResolvedName = r.file_name || '';
+            result.style.display = 'block';
+        } else {
+            status.textContent = '✗ ' + (r && r.note ? r.note : 'خطأ غير معروف');
+            status.style.color = '#ff8a99';
+        }
+    }).catch(function (e) {
+        btn.disabled = false;
+        btn.textContent = 'استخراج الرابط المباشر';
+        status.textContent = 'تعذر الاتصال بـ resolve.php — تأكد أن الملف مرفوع بجانب admin.php';
+        status.style.color = '#ff8a99';
+    });
+}
+
+// زر "استخدمه في نموذج الملف": يملأ الرابط المباشر + الحجم + الاسم + رابط المصدر
+function fluxUseResult() {
+    var direct = document.getElementById('resolve-direct');
+    if (!direct || !direct.value) return;
+    var form = document.getElementById('file-form');
+    if (!form) return;
+    var urlInput = form.querySelector('input[name="file_url"]');
+    var sizeInput = form.querySelector('input[name="size_mb"]');
+    var nameInput = form.querySelector('input[name="file_name"]');
+    var srcInput = document.getElementById('source-url');
+    if (urlInput) urlInput.value = direct.value;
+    if (sizeInput && window._fluxResolvedSize > 0) sizeInput.value = (window._fluxResolvedSize / 1048576).toFixed(2);
+    if (nameInput && window._fluxResolvedName && nameInput.value.trim() === '') nameInput.value = window._fluxResolvedName;
+    if (srcInput) srcInput.value = document.getElementById('resolve-url').value.trim();
+    form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (urlInput) {
+        urlInput.focus();
+        urlInput.select();
+    }
+}
+</script>
 </body>
 </html>

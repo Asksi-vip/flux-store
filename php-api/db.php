@@ -50,7 +50,7 @@ function flux_db()
         )
     ");
 
-    // ترقية قواعد بيانات النسخ القديمة: أعمدة التحميل
+    // ترقية قواعد بيانات النسخ القديمة: أعمدة التحميل + أعمدة مستخرج الرابط المباشر
     flux_migrate($pdo);
 
     // ملفات التحميل لكل لعبة (APK أساسي + ملفات إضافية OBB/Data مع المسار المحسوب)
@@ -63,6 +63,8 @@ function flux_db()
             type         TEXT NOT NULL DEFAULT 'apk',
             size         INTEGER NOT NULL DEFAULT 0,
             version_code INTEGER NOT NULL DEFAULT 0,
+            source_url   TEXT NOT NULL DEFAULT '',
+            resolved_at  TEXT NOT NULL DEFAULT '',
             created_at   TEXT NOT NULL DEFAULT (datetime('now'))
         )
     ");
@@ -95,6 +97,26 @@ function flux_migrate(PDO $pdo)
     foreach ($extra as $col => $sql) {
         if (!in_array($col, $names, true)) {
             $pdo->exec($sql);
+        }
+    }
+
+    // ترقية جدول الملفات: أعمدة مستخرج الرابط المباشر
+    // source_url  ← رابط الصفحة الأصلي (ميديافاير/درايف/صفحة تحميل) لإعادة الاستخراج لاحقًا
+    // resolved_at ← وقت آخر استخراج ناجح للرابط المباشر
+    // (على قاعدة جديدة الجدول غير موجود بعد — يُنشأ كامل الأعمدة بعد الترقية مباشرة)
+    $fileNames = array();
+    foreach ($pdo->query('PRAGMA table_info(game_files)')->fetchAll() as $c) {
+        $fileNames[] = $c['name'];
+    }
+    if (!empty($fileNames)) {
+        $fileExtra = array(
+            'source_url' => "ALTER TABLE game_files ADD COLUMN source_url TEXT NOT NULL DEFAULT ''",
+            'resolved_at' => "ALTER TABLE game_files ADD COLUMN resolved_at TEXT NOT NULL DEFAULT ''",
+        );
+        foreach ($fileExtra as $col => $sql) {
+            if (!in_array($col, $fileNames, true)) {
+                $pdo->exec($sql);
+            }
         }
     }
 }

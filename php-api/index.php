@@ -3,13 +3,18 @@
  * واجهة الـ API الرئيسية لمتجر Flux — PHP (بديل متوافق 100% مع نسخة Django).
  *
  * المسارات المدعومة (نفس عقد الـ API الذي يستخدمه التطبيق):
- *   GET /flux/api/games/            قائمة الألعاب مع الفلاتر وتقسيم الصفحات
- *   GET /flux/api/games/{id}/       تفاصيل لعبة واحدة
- *   GET /flux/api/games/featured/   الألعاب المميزة فقط (للبانر المتحرك)
+ *   GET /flux/api/games/                قائمة الألعاب مع الفلاتر وتقسيم الصفحات
+ *   GET /flux/api/games/{id}/           تفاصيل لعبة واحدة
+ *   GET /flux/api/games/featured/       الألعاب المميزة فقط (للبانر المتحرك)
+ *   GET /flux/api/games/{id}/refresh/   تحديث روابط التحميل القديمة من صفحات المصدر
+ *                                       (ميديافاير/درايف) قبل بدء التحميل من التطبيق
  *
  * الفلاتر المدعومة في القائمة:
  *   search، category، min_price، max_price، featured، ordering، page، page_size
  */
+
+// مستخرج الرابط المباشر (لتحديث روابط الصفحات القديمة تلقائيًا)
+require_once __DIR__ . '/resolve.php';
 
 // ترويسات CORS حتى يستطيع التطبيق والويب الاتصال مباشرة
 header('Access-Control-Allow-Origin: *');
@@ -77,6 +82,43 @@ if (ctype_digit($parts[1])) {
     if (!$row) {
         flux_json(array('detail' => 'اللعبة المطلوبة غير موجودة'), 404);
     }
+
+    // ---------- تحديث روابط التحميل القديمة (games/{id}/refresh/) ----------
+    // يستدعيها التطبيق قبل بدء التحميل: إذا كان الملف مأخوذًا من صفحة
+    // (ميديافاير/درايف) وقديمًا (أكثر من ساعتين) نستخرج الرابط المباشر من جديد
+    if (isset($parts[2]) && $parts[2] === 'refresh') {
+        $stmt = $pdo->prepare('SELECT * FROM game_files WHERE game_id = :gid ORDER BY id ASC');
+        $stmt->execute(array(':gid' => $gid));
+        $rows = $stmt->fetchAll();
+        $upd = $pdo->prepare("UPDATE game_files SET url = :url, size = :size, resolved_at = datetime('now') WHERE id = :id");
+        $now = time();
+        foreach ($rows as $row) {
+            $src = trim((string) $row['source_url']);
+            if ($src === '' || flux_is_file_url($src)) {
+                continue; // بلا صفحة مصدر أو المصدر نفسه رابط مباشر — لا تحديث
+            }
+            $resolvedAt = strtotime((string) $row['resolved_at']);
+            $stale = ($row['resolved_at'] === '' || $resolvedAt === false || ($now - $resolvedAt) > 2 * 3600);
+            if (!$stale) {
+                continue; // الرابط حديث — لا حاجة لإعادة الاستخراج
+            }
+            $res = flux_resolve_link($src);
+            if (!empty($res['ok'])) {
+                $newUrl = ($res['direct_url'] !== '') ? (string) $res['direct_url'] : (string) $row['url'];
+                $newSize = ((int) $res['size'] > 0) ? (int) $res['size'] : (int) $row['size'];
+                $upd->execute(array(':url' => $newUrl, ':size' => $newSize, ':id' => (int) $row['id']));
+            }
+        }
+        // إعادة القراءة بعد التحديث ثم إرجاع اللعبة بنفس صيغة التفاصيل
+        $stmt = $pdo->prepare('SELECT * FROM games WHERE id = :id');
+        $stmt->execute(array(':id' => $gid));
+        $row = $stmt->fetch();
+        $stmt = $pdo->prepare('SELECT * FROM game_files WHERE game_id = :gid ORDER BY id ASC');
+        $stmt->execute(array(':gid' => $gid));
+        $files = $stmt->fetchAll();
+        flux_json(flux_serialize_game($row, $files));
+    }
+
     $filesMap = flux_files_for_games($pdo, array($gid));
     flux_json(flux_serialize_game($row, isset($filesMap[$gid]) ? $filesMap[$gid] : array()));
 }

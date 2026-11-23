@@ -13,3 +13,7 @@ define('FLUX_ADMIN_PASSWORD', 'flux-admin-2026');
 
 // مسار ملف قاعدة البيانات SQLite (يُنشأ تلقائيًا داخل مجلد data/)
 define('FLUX_DB_PATH', __DIR__ . '/data/flux_store.db');
+
+// مستخرج الرابط المباشر (resolve.php): اتركه false على الاستضافة —
+// يمنع الخادم من فتح عناوين داخلية/محلية. فعّله true فقط للاختبار المحلي.
+define('FLUX_RESOLVE_ALLOW_LOCAL', false);

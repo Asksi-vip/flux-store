@@ -12,6 +12,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/game.dart';
+import 'api_service.dart';
 
 /// حالة ملف واحد داخل مهمة التحميل.
 enum FileTaskState { pending, downloading, completed }
@@ -208,9 +209,21 @@ class DownloadManager extends ChangeNotifier with WidgetsBindingObserver {
 
   /// بدء تحميل لعبة مجانية (أو استكمال مهمة موجودة).
   Future<void> start(Game game) async {
-    final DownloadInfo? dl = game.download;
+    DownloadInfo? dl = game.download;
     if (dl == null || !dl.available) return;
     await _ensurePermissions();
+
+    // تحديث روابط صفحات المصدر (ميديافاير/درايف) إذا كانت قديمة —
+    // الخادم يعيد استخراج الرابط المباشر عند القِدم فقط، والفشل يُتجاهل بهدوء
+    try {
+      final Game? fresh = await ApiService.instance.refreshDownloadLinks(game.id);
+      if (fresh != null &&
+          fresh.download != null &&
+          fresh.download!.available) {
+        game = fresh;
+        dl = fresh.download;
+      }
+    } catch (_) {}
 
     final DownloadTask? existing = _tasks[game.id];
     if (existing != null && existing.state == DownloadTaskState.completed) {
@@ -218,7 +231,7 @@ class DownloadManager extends ChangeNotifier with WidgetsBindingObserver {
     }
     if (existing == null) {
       final List<FileTask> files = <FileTask>[];
-      for (final DownloadFile f in dl.files) {
+      for (final DownloadFile f in dl!.files) {
         files.add(FileTask(f, localPath: await _resolvePath(game, f)));
       }
       _tasks[game.id] =

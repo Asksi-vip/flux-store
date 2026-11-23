@@ -259,6 +259,24 @@ class ApiService {
     }
   }
 
+  /// طلب تحديث روابط التحميل من صفحات المصدر (ميديافاير/درايف) قبل البدء.
+  ///
+  /// الخادم يعيد استخراج الرابط المباشر فقط إذا كان قديمًا (أكثر من ساعتين)،
+  /// ويعيد بيانات اللعبة بنفس صيغة التفاصيل. عند أي فشل تعيد null
+  /// ويتابع التطبيق بالروابط المحفوظة كما هي.
+  Future<Game?> refreshDownloadLinks(int gameId) async {
+    try {
+      final response = await _dio.get('/games/$gameId/refresh/');
+      final data = response.data;
+      if (data is Map && data['id'] != null) {
+        return Game.fromJson(Map<String, dynamic>.from(data));
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// جلب الألعاب المميزة (للبانر المتحرك) — من الشبكة أو من الكاش المخصص.
   Future<List<Game>> getFeatured() async {
     try {
