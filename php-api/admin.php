@@ -457,63 +457,200 @@ if ($logged && $pdo !== null && isset($_GET['categories'])) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>لوحة إدارة متجر FLUX</title>
 <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: #101014; color: #fff; font-family: "Segoe UI", Tahoma, sans-serif; padding: 24px 16px; }
-    .wrap { max-width: 980px; margin: 0 auto; }
-    h1 { font-size: 22px; margin-bottom: 4px; }
-    .sub { color: #b8b8c1; font-size: 13px; margin-bottom: 20px; }
-    .brand { display: inline-block; background: #202024; border: 1px solid #2a2a2a; padding: 6px 14px; border-radius: 4px; font-weight: 900; letter-spacing: 3px; margin-bottom: 14px; }
-    .card { background: #18181c; border: 1px solid #2a2a2a; border-radius: 6px; padding: 20px; margin-bottom: 20px; }
-    .alert-ok { background: rgba(47,191,113,.12); border: 1px solid #2fbf71; color: #2fbf71; padding: 10px 14px; border-radius: 4px; margin-bottom: 14px; font-size: 14px; }
-    .alert-err { background: rgba(224,69,90,.12); border: 1px solid #e0455a; color: #ff8a99; padding: 10px 14px; border-radius: 4px; margin-bottom: 14px; font-size: 14px; }
-    label { display: block; font-size: 12px; color: #b8b8c1; margin: 12px 0 6px; }
-    input[type=text], input[type=password], input[type=number], input[type=date], input[type=url], select, textarea {
-        width: 100%; background: #202024; border: 1px solid #2a2a2a; color: #fff;
-        padding: 10px 12px; border-radius: 4px; font-size: 14px; font-family: inherit;
+    :root {
+        --bg:#101014; --surface:#18181c; --elevated:#202024; --border:#2a2a2a;
+        --blue:#0074e4; --cyan:#26bbff; --text:#ffffff; --muted:#b8b8c1;
+        --ok:#2fbf71; --err:#e0455a;
     }
-    input:focus, select:focus, textarea:focus { outline: none; border-color: #0074e4; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body { background: var(--bg); color: var(--text); font-family: "Segoe UI", Tahoma, sans-serif; min-height: 100vh; }
+
+    /* ============ الهيكل: شريط جانبي (يمين) + منطقة رئيسية ============ */
+    .shell { display: flex; min-height: 100vh; }
+    .sidebar {
+        width: 236px; flex: 0 0 236px; background: var(--surface);
+        border-inline-start: 1px solid var(--border);
+        display: flex; flex-direction: column; position: sticky; top: 0;
+        height: 100vh; overflow-y: auto;
+    }
+    .side-brand { padding: 20px 18px 14px; border-bottom: 1px solid var(--border); }
+    .side-brand .logo { display: inline-block; background: var(--elevated); border: 1px solid var(--border);
+        padding: 7px 16px; border-radius: 4px; font-weight: 900; letter-spacing: 3px; font-size: 15px; }
+    .side-brand .logo span { color: var(--cyan); }
+    .side-brand p { color: var(--muted); font-size: 11px; margin-top: 8px; letter-spacing: .5px; }
+    .side-nav { padding: 12px 10px; flex: 1; }
+    .side-nav .nav-title { font-size: 10.5px; color: var(--muted); letter-spacing: 1.5px; margin: 10px 8px 6px; font-weight: 700; }
+    .side-nav a {
+        display: flex; align-items: center; gap: 10px; padding: 10px 12px; margin: 2px 0;
+        color: var(--muted); text-decoration: none; font-size: 13.5px; font-weight: 600;
+        border-radius: 4px; border-inline-start: 3px solid transparent; transition: all .15s ease;
+    }
+    .side-nav a:hover { background: var(--elevated); color: var(--text); }
+    .side-nav a.active { background: rgba(0,116,228,.14); border-inline-start-color: var(--blue); color: #fff; }
+    .side-nav a .ic { width: 20px; text-align: center; font-size: 15px; }
+    .side-foot { padding: 14px; border-top: 1px solid var(--border); }
+    .side-foot .server { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--ok); margin-bottom: 10px; }
+    .side-foot .server i { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); display: inline-block; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+
+    .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+    .topbar {
+        position: sticky; top: 0; z-index: 40; background: rgba(24,24,28,.92); backdrop-filter: blur(8px);
+        border-bottom: 1px solid var(--border); padding: 14px 26px;
+        display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+    }
+    .topbar h1 { font-size: 18px; font-weight: 800; }
+    .topbar .crumb { color: var(--muted); font-size: 12px; margin-top: 2px; }
+    .topbar .who { display: flex; align-items: center; gap: 10px; }
+    .topbar .who .badge { background: rgba(0,116,228,.16); border: 1px solid rgba(0,116,228,.55); color: var(--cyan);
+        padding: 5px 12px; border-radius: 4px; font-size: 11.5px; font-weight: 800; letter-spacing: 1px; }
+    .content { max-width: 1060px; width: 100%; margin: 0 auto; padding: 22px 26px 40px; }
+
+    /* ============ بطاقات إحصائيات النظرة العامة ============ */
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 22px; }
+    .stat { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 16px 18px; position: relative; overflow: hidden; }
+    .stat::before { content: ""; position: absolute; inset-inline-start: 0; top: 0; bottom: 0; width: 3px; background: var(--accent, var(--blue)); }
+    .stat .num { font-size: 26px; font-weight: 900; letter-spacing: .5px; }
+    .stat .lbl { color: var(--muted); font-size: 12px; margin-top: 3px; }
+    .stat .ic { position: absolute; inset-inline-end: 12px; top: 12px; font-size: 18px; opacity: .8; }
+
+    /* ============ البطاقات والتنبيهات ============ */
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 22px; margin-bottom: 20px; }
+    .card > h2 { font-size: 17px; margin-bottom: 4px; }
+    .card .head-desc { color: var(--muted); font-size: 12.5px; margin-bottom: 14px; }
+    .alert-ok { background: rgba(47,191,113,.12); border: 1px solid var(--ok); color: var(--ok); padding: 11px 16px; border-radius: 4px; margin-bottom: 14px; font-size: 14px; }
+    .alert-err { background: rgba(224,69,90,.12); border: 1px solid var(--err); color: #ff8a99; padding: 11px 16px; border-radius: 4px; margin-bottom: 14px; font-size: 14px; }
+
+    /* ============ النماذج ============ */
+    label { display: block; font-size: 12px; color: var(--muted); margin: 12px 0 6px; font-weight: 600; }
+    input[type=text], input[type=password], input[type=number], input[type=date], input[type=url], select, textarea {
+        width: 100%; background: var(--elevated); border: 1px solid var(--border); color: var(--text);
+        padding: 10px 12px; border-radius: 4px; font-size: 14px; font-family: inherit; transition: border-color .15s;
+    }
+    input:focus, select:focus, textarea:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(0,116,228,.18); }
     textarea { min-height: 90px; resize: vertical; }
     .row { display: flex; gap: 12px; flex-wrap: wrap; }
     .row > div { flex: 1 1 150px; }
-    .btn { display: inline-block; background: #0074e4; color: #fff; border: none; padding: 11px 26px;
-           border-radius: 4px; font-size: 14px; font-weight: 700; cursor: pointer; margin-top: 16px; font-family: inherit; }
+    .check { display: flex; align-items: center; gap: 8px; margin-top: 14px; font-size: 14px; color: var(--text); }
+
+    /* ============ الأزرار ============ */
+    .btn { display: inline-block; background: var(--blue); color: #fff; border: none; padding: 11px 26px;
+           border-radius: 4px; font-size: 14px; font-weight: 700; cursor: pointer; margin-top: 16px; font-family: inherit;
+           transition: background .15s, transform .1s; }
     .btn:hover { background: #1a85ee; }
-    .btn-ghost { background: transparent; border: 1px solid #2a2a2a; color: #fff; }
-    .btn-danger { background: transparent; border: 1px solid #e0455a; color: #ff8a99; padding: 6px 12px; margin: 0; font-size: 12px; }
-    .btn-edit { background: transparent; border: 1px solid #2a2a2a; color: #26bbff; padding: 6px 12px; margin: 0; font-size: 12px; }
+    .btn:active { transform: translateY(1px); }
+    .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+    .btn-ghost:hover { background: var(--elevated); border-color: var(--blue); }
+    .btn-danger { background: transparent; border: 1px solid var(--err); color: #ff8a99; padding: 6px 12px; margin: 0; font-size: 12px; border-radius: 4px; cursor: pointer; font-family: inherit; }
+    .btn-danger:hover { background: rgba(224,69,90,.12); }
+    .btn-edit { background: transparent; border: 1px solid var(--border); color: var(--cyan); padding: 6px 12px; margin: 0; font-size: 12px; border-radius: 4px; cursor: pointer; font-family: inherit; text-decoration: none; display: inline-block; }
+    .btn-edit:hover { background: var(--elevated); border-color: var(--cyan); }
+
+    /* ============ الجداول ============ */
+    .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 6px; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    th { text-align: right; color: #b8b8c1; font-weight: 600; padding: 8px; border-bottom: 1px solid #2a2a2a; }
-    td { padding: 8px; border-bottom: 1px solid #1f1f24; vertical-align: middle; }
-    td img { width: 44px; height: 60px; object-fit: cover; border-radius: 3px; display: block; }
-    .tag { background: #0074e4; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: 700; }
-    .tag-free { background: rgba(38,187,255,.15); border: 1px solid #26bbff; color: #26bbff; }
-    .actions { display: flex; gap: 6px; }
-    .check { display: flex; align-items: center; gap: 8px; margin-top: 14px; font-size: 14px; color: #fff; }
-    .check input { width: auto; }
+    th { text-align: right; color: var(--muted); font-weight: 700; font-size: 11px; letter-spacing: 1px;
+         padding: 11px 12px; background: var(--elevated); border-bottom: 1px solid var(--border); white-space: nowrap; }
+    td { padding: 10px 12px; border-bottom: 1px solid #1f1f24; vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    tbody tr { transition: background .12s; }
+    tbody tr:hover { background: rgba(0,116,228,.05); }
+    td img { width: 44px; height: 60px; object-fit: cover; border-radius: 3px; display: block; border: 1px solid var(--border); }
+    .tag { background: var(--blue); padding: 3px 9px; border-radius: 3px; font-size: 11px; font-weight: 800; }
+    .tag-free { background: rgba(38,187,255,.15); border: 1px solid var(--cyan); color: var(--cyan); }
+    .actions { display: flex; gap: 6px; align-items: center; }
+    .actions form { margin: 0; }
+
+    /* ============ شاشة الدخول ============ */
+    .login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px 16px;
+        background: radial-gradient(ellipse at 50% -20%, rgba(0,116,228,.18), transparent 55%), var(--bg); }
+    .login-box { width: 100%; max-width: 400px; background: var(--surface); border: 1px solid var(--border);
+        border-radius: 8px; padding: 34px 30px; }
+    .login-box .logo { display: inline-block; background: var(--elevated); border: 1px solid var(--border);
+        padding: 9px 20px; border-radius: 4px; font-weight: 900; letter-spacing: 4px; font-size: 17px; margin-bottom: 16px; }
+    .login-box .logo span { color: var(--cyan); }
+    .login-box h1 { font-size: 19px; margin-bottom: 4px; }
+    .login-box p { color: var(--muted); font-size: 12.5px; margin-bottom: 18px; }
+
+    /* ============ التجاوب ============ */
+    @media (max-width: 860px) {
+        .shell { flex-direction: column; }
+        .sidebar { width: 100%; flex: none; position: static; height: auto; border-inline-start: none; border-bottom: 1px solid var(--border); }
+        .side-nav { display: flex; flex-wrap: wrap; gap: 2px; padding: 8px 10px; }
+        .side-nav a { border-inline-start: none; border-bottom: 2px solid transparent; padding: 8px 12px; }
+        .side-nav a.active { border-inline-start: none; border-bottom-color: var(--blue); }
+        .side-nav .nav-title { display: none; }
+        .side-foot { display: none; }
+        .content { padding: 18px 14px 30px; }
+        .topbar { padding: 12px 14px; }
+    }
     @media (max-width: 640px) { td:nth-child(3), th:nth-child(3) { display: none; } }
 </style>
 </head>
 <body>
-<div class="wrap">
-    <div class="brand">FLUX</div>
-    <h1>لوحة إدارة المتجر</h1>
-    <p class="sub">إضافة وتعديل وحذف ألعاب الـ API — التغييرات تظهر في التطبيق فورًا</p>
-
-    <?php if ($msg !== '') { ?><div class="alert-ok"><?php echo e($msg); ?></div><?php } ?>
-    <?php if ($error !== '') { ?><div class="alert-err"><?php echo e($error); ?></div><?php } ?>
-
-    <?php if (!$logged) { ?>
-        <!-- شاشة تسجيل الدخول -->
-        <div class="card" style="max-width:420px;">
+<?php if (!$logged) { ?>
+    <!-- ============ شاشة تسجيل الدخول (مركزية مثل بوابات Epic) ============ -->
+    <div class="login-wrap">
+        <div class="login-box">
+            <div class="logo">FLUX<span> GAMES</span></div>
+            <h1>لوحة إدارة المتجر</h1>
+            <p>بوابة الإدارة — أضف وعدّل ألعاب الـ API، والتحديثات تظهر في التطبيق فورًا</p>
+            <?php if ($msg !== '') { ?><div class="alert-ok"><?php echo e($msg); ?></div><?php } ?>
+            <?php if ($error !== '') { ?><div class="alert-err"><?php echo e($error); ?></div><?php } ?>
             <form method="post" action="admin.php">
                 <label>كلمة مرور الإدارة</label>
                 <input type="password" name="password" required autofocus>
-                <button class="btn" type="submit">دخول</button>
+                <button class="btn" type="submit" style="width:100%;">دخول إلى اللوحة</button>
             </form>
         </div>
-    <?php } else { ?>
+    </div>
+<?php } else { ?>
+    <?php
+    // حالة الصفحة الحالية لتمييز رابط التنقل النشط وعنوان الشريط العلوي
+    $adminPage = $filesGame !== null ? 'files' : ($catPage ? 'cats' : ($editGame ? 'edit' : 'main'));
+    ?>
+    <div class="shell">
+        <!-- ============ الشريط الجانبي (تنقل دائم مثل بورتال المطورين) ============ -->
+        <aside class="sidebar">
+            <div class="side-brand">
+                <div class="logo">FLUX<span> GAMES</span></div>
+                <p>لوحة إدارة المتجر</p>
+            </div>
+            <nav class="side-nav">
+                <div class="nav-title">المتجر</div>
+                <a href="admin.php" class="<?php echo ($adminPage === 'main' || $adminPage === 'edit') ? 'active' : ''; ?>"><span class="ic">🎮</span> الألعاب والإضافة</a>
+                <a href="admin.php?categories=1" class="<?php echo $adminPage === 'cats' ? 'active' : ''; ?>"><span class="ic">🗂</span> التصنيفات</a>
+                <?php if ($filesGame !== null) { ?>
+                <div class="nav-title">ملفات اللعبة</div>
+                <a href="admin.php?files=<?php echo (int) $filesGame['id']; ?>" class="active"><span class="ic">📦</span> <?php echo e($filesGame['name']); ?></a>
+                <?php } ?>
+            </nav>
+            <div class="side-foot">
+                <div class="server"><i></i> <?php echo $pdo !== null ? 'الخادم وقاعدة البيانات متصلان' : 'قاعدة البيانات غير متصلة'; ?></div>
+                <a class="btn btn-ghost" href="?logout=1" style="width:100%; text-align:center; margin:0;">تسجيل الخروج</a>
+            </div>
+        </aside>
 
-        <?php if ($pdo === null) { ?>
+        <div class="main">
+            <header class="topbar">
+                <div>
+                    <h1><?php
+                    echo $adminPage === 'files' ? 'ملفات التحميل — ' . e($filesGame['name'])
+                        : ($adminPage === 'cats' ? 'إدارة التصنيفات'
+                        : ($adminPage === 'edit' ? 'تعديل لعبة — ' . e($editGame['name'])
+                        : 'نظرة عامة'));
+                    ?></h1>
+                    <div class="crumb">FLUX GAMES · لوحة الإدارة — التغييرات تظهر في التطبيق فورًا</div>
+                </div>
+                <div class="who"><span class="badge">ADMIN</span></div>
+            </header>
+
+            <div class="content">
+                <?php if ($msg !== '') { ?><div class="alert-ok"><?php echo e($msg); ?></div><?php } ?>
+                <?php if ($error !== '') { ?><div class="alert-err"><?php echo e($error); ?></div><?php } ?>
+
+                <?php if ($pdo === null) { ?>
             <div class="card">لا يمكن الاتصال بقاعدة البيانات.</div>
         <?php } else { ?>
 
@@ -691,8 +828,8 @@ if ($logged && $pdo !== null && isset($_GET['categories'])) {
             <?php if ($filesGame !== null) { ?>
             <!-- ============ صفحة إدارة ملفات التحميل (APK / OBB / Data) ============ -->
             <div class="card">
-                <h2 style="font-size:16px; margin-bottom:4px;">ملفات التحميل: <?php echo e($filesGame['name']); ?></h2>
-                <p class="sub" style="margin-bottom:12px;">أول ملف APK = ملف اللعبة الرئيسي، وملفات OBB/Data تُحسب مسارات تثبيتها تلقائيًا حسب حزمة اللعبة.</p>
+                <h2>ملفات التحميل: <?php echo e($filesGame['name']); ?></h2>
+                <p class="head-desc">أول ملف APK = ملف اللعبة الرئيسي، وملفات OBB/Data تُحسب مسارات تثبيتها تلقائيًا حسب حزمة اللعبة.</p>
                 <a class="btn btn-ghost" href="admin.php" style="text-decoration:none; margin:0;">← رجوع لقائمة الألعاب</a>
 
                 <!-- ============ أداة استخراج الرابط المباشر (مثل سحب رابط التحميل من الصفحة) ============ -->
@@ -774,8 +911,8 @@ if ($logged && $pdo !== null && isset($_GET['categories'])) {
             </div>
 
             <div class="card">
-                <h2 style="font-size:16px; margin-bottom:12px;">ملفات اللعبة (<?php echo count($gameFiles); ?>)</h2>
-                <div style="overflow-x:auto;">
+                <h2>ملفات اللعبة (<?php echo count($gameFiles); ?>)</h2>
+                <div class="table-wrap">
                 <table>
                     <tr>
                         <th>النوع</th>
@@ -824,8 +961,8 @@ if ($logged && $pdo !== null && isset($_GET['categories'])) {
             <?php if ($catPage) { ?>
             <!-- ============ صفحة إدارة التصنيفات ============ -->
             <div class="card">
-                <h2 style="font-size:16px; margin-bottom:4px;">إدارة التصنيفات</h2>
-                <p class="sub" style="margin-bottom:12px;">أضف تصنيفات جديدة، عدّل أسماءها، أو احذفها — تظهر في التطبيق والفلاتر فورًا.</p>
+                <h2>إدارة التصنيفات</h2>
+                <p class="head-desc">أضف تصنيفات جديدة، عدّل أسماءها، أو احذفها — تظهر في التطبيق والفلاتر فورًا.</p>
                 <a class="btn btn-ghost" href="admin.php" style="text-decoration:none; margin:0;">← رجوع لقائمة الألعاب</a>
 
                 <h3 style="font-size:14px; margin:16px 0 0;">إضافة تصنيف جديد</h3>
@@ -875,12 +1012,32 @@ if ($logged && $pdo !== null && isset($_GET['categories'])) {
             </div>
             <?php } else { ?>
             <!-- جدول الألعاب -->
+            <?php
+            // إحصائيات النظرة العامة — محسوبة مباشرة من بيانات الصفحة
+            $statFree = 0; $statDeal = 0; $statFeat = 0;
+            foreach ($games as $sg) {
+                $sp = (float) $sg['price'];
+                $sd = $sg['discount_price'] === null ? null : (float) $sg['discount_price'];
+                if ($sp <= 0) { $statFree++; }
+                elseif ($sd !== null && $sd < $sp && $sp > 0) { $statDeal++; }
+                if ((int) $sg['is_featured'] === 1) { $statFeat++; }
+            }
+            $statFiles = array_sum($filesCountMap);
+            ?>
+            <div class="stats">
+                <div class="stat" style="--accent:#0074e4;"><div class="num"><?php echo count($games); ?></div><div class="lbl">إجمالي الألعاب</div><div class="ic">🎮</div></div>
+                <div class="stat" style="--accent:#26bbff;"><div class="num"><?php echo $statFree; ?></div><div class="lbl">ألعاب مجانية</div><div class="ic">🎁</div></div>
+                <div class="stat" style="--accent:#f5a623;"><div class="num"><?php echo $statDeal; ?></div><div class="lbl">بعروض وخصومات</div><div class="ic">🏷️</div></div>
+                <div class="stat" style="--accent:#2fbf71;"><div class="num"><?php echo $statFeat; ?></div><div class="lbl">مميزة في البانر</div><div class="ic">⭐</div></div>
+                <div class="stat" style="--accent:#7c3aed;"><div class="num"><?php echo $statFiles; ?></div><div class="lbl">ملفات التحميل</div><div class="ic">📦</div></div>
+            </div>
             <div class="card">
-                <h2 style="font-size:16px; margin-bottom:12px;">الألعاب (<?php echo count($games); ?>)</h2>
-                <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">
+                <h2>الألعاب (<?php echo count($games); ?>)</h2>
+                <p class="head-desc">إدارة كاملة: تعديل بيانات اللعبة، ملفات التحميل APK/OBB/Data، والتصنيفات</p>
+                <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
                     <a class="btn btn-ghost" href="admin.php?categories=1" style="text-decoration:none; margin:0;">🗂 إدارة التصنيفات</a>
                 </div>
-                <div style="overflow-x:auto;">
+                <div class="table-wrap">
                 <table>
                     <tr>
                         <th>الغلاف</th>
@@ -936,11 +1093,11 @@ if ($logged && $pdo !== null && isset($_GET['categories'])) {
             <?php } ?>
             <?php } ?>
 
-            <a class="btn btn-ghost" href="?logout=1" style="text-decoration:none;">تسجيل الخروج</a>
         <?php } ?>
-    <?php } ?>
-</div>
-
+            </div><!-- /content -->
+        </div><!-- /main -->
+    </div><!-- /shell -->
+<?php } ?>
 <script>
 // ============ محرك استخراج الرابط المباشر (واجهة admin.php) ============
 // الاتصال بـ resolve.php — الجلسة نفسها محمية، والنتيجة JSON
