@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../controllers/library_controller.dart';
+import '../controllers/wishlist_controller.dart';
 import '../models/game.dart';
 import '../services/auth_service.dart';
 import '../services/download_manager.dart';
@@ -10,8 +11,10 @@ import '../widgets/page_fade_transition.dart';
 import 'downloads_screen.dart';
 import 'game_details_screen.dart';
 import 'home_screen.dart';
+import 'library_screen.dart';
 import 'profile_screen.dart';
 import 'search_screen.dart';
+import 'wishlist_screen.dart';
 
 /// الهيكل الرئيسي بأسلوب Epic: شريط علوي بشعار FLUX + تنقل سفلي متحرك.
 class MainShell extends StatefulWidget {
@@ -30,8 +33,9 @@ class _MainShellState extends State<MainShell> {
   @override
   void initState() {
     super.initState();
-    // تحميل المكتبة المحفوظة محليًا (كانت تُحمّل في شاشة الافتتاح سابقًا)
+    // تحميل المكتبة والمفضلة المحفوظتين محليًا عند بدء التطبيق
     widget.controller.load();
+    WishlistController.instance.load();
   }
 
   @override
@@ -40,14 +44,21 @@ class _MainShellState extends State<MainShell> {
     super.dispose();
   }
 
-  // تبويبان فقط مثل طلب المستخدم: المتجر + التنزيلات
-  // (البحث والحساب عبر أزرار الترويسة، والمكتبة عبر رابط داخل التنزيلات)
+  // أربعة تبويبات بأسلوب تطبيق Epic للجوال: المتجر، المكتبة، المفضلة، التنزيلات
+  // (البحث والحساب عبر أزرار الترويسة)
   static const List<IconData> _icons = [
     Icons.storefront_rounded,
+    Icons.video_library_rounded,
+    Icons.favorite_outline_rounded,
     Icons.download_rounded,
   ];
 
-  static const List<String> _labels = ['المتجر', 'التنزيلات'];
+  static const List<String> _labels = [
+    'المتجر',
+    'المكتبة',
+    'المفضلة',
+    'التنزيلات',
+  ];
 
   void _setTab(int i) => setState(() => _index = i);
 
@@ -101,7 +112,7 @@ class _MainShellState extends State<MainShell> {
                 letterSpacing: 2.5,
               ),
             ),
-            if (_index == 1) ...[
+            if (_index == 3) ...[
               const SizedBox(width: 10),
               Container(
                 padding:
@@ -127,7 +138,7 @@ class _MainShellState extends State<MainShell> {
           IconButton(
             // في تبويب التنزيلات: البحث يفلتر التنزيلات المحملة داخل القسم نفسه
             onPressed: () {
-              if (_index == 1) {
+              if (_index == 3) {
                 _downloadsSearchFocus.requestFocus();
               } else {
                 _openSearch();
@@ -174,6 +185,16 @@ class _MainShellState extends State<MainShell> {
         index: _index,
         children: [
           HomeScreen(controller: widget.controller, onOpenGame: _openGame),
+          // تبويب المكتبة — نفس شاشة مكتبة اللاعب مع زر تصفح يعيد للمتجر
+          LibraryScreen(
+            controller: widget.controller,
+            onBrowse: () => _setTab(0),
+          ),
+          // تبويب قائمة المفضلة بأسلوب Epic
+          WishlistScreen(
+            libraryController: widget.controller,
+            onBrowse: () => _setTab(0),
+          ),
           DownloadsScreen(
             controller: widget.controller,
             onOpenGame: _openGame,
@@ -182,7 +203,10 @@ class _MainShellState extends State<MainShell> {
         ],
       ),
       bottomNavigationBar: ListenableBuilder(
-        listenable: DownloadManager.instance,
+        listenable: Listenable.merge([
+          DownloadManager.instance,
+          WishlistController.instance,
+        ]),
         builder: (context, _) => _bottomNav(),
       ),
     );
@@ -206,14 +230,54 @@ class _MainShellState extends State<MainShell> {
     );
   }
 
-  /// أيقونة التبويب — تبويب التنزيلات يظهر عليه نقطة زرقاء عند وجود تنزيلات نشطة.
+  /// أيقونة التبويب — تبويب التنزيلات نقطة زرقاء عند وجود تنزيلات نشطة،
+  /// وتبويب المفضلة شارة بعدد الألعاب المحفوظة (بأسلوب Epic).
   Widget _navIcon(int i, bool selected) {
     final Widget icon = Icon(
       _icons[i],
       size: 22,
       color: selected ? EpicColors.textPrimary : EpicColors.textSecondary,
     );
-    if (i == 1 && DownloadManager.instance.hasActive) {
+
+    // شارة عدد المفضلة على تبويب القلب
+    if (i == 2) {
+      final int count = WishlistController.instance.count;
+      if (count > 0) {
+        return Stack(
+          clipBehavior: Clip.none,
+          children: [
+            icon,
+            PositionedDirectional(
+              top: -4,
+              end: -6,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                constraints: const BoxConstraints(minWidth: 15),
+                decoration: BoxDecoration(
+                  color: EpicColors.blue,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: EpicColors.surface, width: 1.5),
+                ),
+                child: Text(
+                  count > 9 ? '9+' : '$count',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 8.5,
+                    fontWeight: FontWeight.w800,
+                    height: 1.3,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      }
+      return icon;
+    }
+
+    // نقطة التنزيلات النشطة
+    if (i == 3 && DownloadManager.instance.hasActive) {
       return Stack(
         clipBehavior: Clip.none,
         children: [

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../controllers/library_controller.dart';
+import '../controllers/wishlist_controller.dart';
 import '../models/game.dart';
 import '../services/api_service.dart';
 import '../services/download_manager.dart';
@@ -142,11 +143,15 @@ class _GameDetailsScreenState extends State<GameDetailsScreen> {
                             () => Navigator.of(context).maybePop(),
                           ),
                           const Spacer(),
-                          if (game.hasDiscount)
+                          // قلب المفضلة بأسلوب Epic في ترويسة البانر
+                          _WishCircleButton(game: game),
+                          if (game.hasDiscount) ...[
+                            const SizedBox(width: 10),
                             DiscountBadge(
                               percent: game.discountPercent,
                               fontSize: 14,
                             ),
+                          ],
                         ],
                       ),
                     ),
@@ -270,6 +275,9 @@ class _GameDetailsScreenState extends State<GameDetailsScreen> {
                                   fontWeight: FontWeight.w700,
                                 ),
                               ),
+                            const SizedBox(width: 10),
+                            // قلب المفضلة داخل مربع السعر أيضًا
+                            _WishCircleButton(game: game),
                           ],
                         ),
                       ),
@@ -661,5 +669,61 @@ class _GameDetailsScreenState extends State<GameDetailsScreen> {
     ];
     final int mi = (int.tryParse(m.group(2) ?? '') ?? 1) - 1;
     return '${int.tryParse(m.group(3) ?? '') ?? ''} ${mi >= 0 && mi < 12 ? months[mi] : ''} ${m.group(1)}';
+  }
+}
+
+/// زر قلب المفضلة الدائري في صفحة التفاصيل: دائرة داكنة على البانر تتحول لقلب
+/// مملوء سماوي عند الحفظ، مع إشعار وزر تراجع — بنمط متجر Epic.
+class _WishCircleButton extends StatelessWidget {
+  const _WishCircleButton({required this.game});
+
+  final Game game;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: WishlistController.instance,
+      builder: (context, _) {
+        final bool saved = WishlistController.instance.contains(game.id);
+        return GestureDetector(
+          onTap: () async {
+            final bool added = await WishlistController.instance.toggle(game);
+            if (!context.mounted) return;
+            ScaffoldMessenger.of(context)
+              ..hideCurrentSnackBar()
+              ..showSnackBar(
+                SnackBar(
+                  content: Text(
+                    added ? 'أُضيفت إلى قائمة المفضلة' : 'أُزيلت من قائمة المفضلة',
+                  ),
+                  action: SnackBarAction(
+                    label: added ? 'تراجع' : 'استعادة',
+                    onPressed: () => WishlistController.instance.toggle(game),
+                  ),
+                ),
+              );
+          },
+          child: Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: saved
+                  ? EpicColors.cyan.withOpacity(.18)
+                  : Colors.black.withOpacity(.45),
+              border: Border.all(
+                color: saved ? EpicColors.cyan : Colors.white.withOpacity(.4),
+                width: 1,
+              ),
+            ),
+            child: Icon(
+              saved ? Icons.favorite_rounded : Icons.favorite_outline_rounded,
+              size: 19,
+              color: saved ? EpicColors.cyan : Colors.white,
+            ),
+          ),
+        );
+      },
+    );
   }
 }

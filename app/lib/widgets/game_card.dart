@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
+import '../controllers/wishlist_controller.dart';
 import '../models/game.dart';
 import '../theme/app_theme.dart';
 import 'price_tag.dart';
@@ -126,6 +128,12 @@ class _GameCardState extends State<GameCard> {
                         start: 8,
                         child: DiscountBadge(percent: game.discountPercent),
                       ),
+                    // زر قلب المفضلة بأسلوب Epic: قلب صغير فوق الغلاف
+                    PositionedDirectional(
+                      top: 6,
+                      end: 6,
+                      child: _WishHeart(game: game),
+                    ),
                   ],
                 ),
               ),
@@ -161,6 +169,63 @@ class _GameCardState extends State<GameCard> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// زر قلب المفضلة فوق غلاف البطاقة: قلب شفاف على دائرة داكنة، يتحول لقلب
+/// مملوء سماوي عند الحفظ — بنمط بطاقات متجر Epic.
+class _WishHeart extends StatelessWidget {
+  const _WishHeart({required this.game});
+
+  final Game game;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: WishlistController.instance,
+      builder: (context, _) {
+        final bool saved = WishlistController.instance.contains(game.id);
+        return GestureDetector(
+          onTap: () async {
+            HapticFeedback.selectionClick();
+            final bool added =
+                await WishlistController.instance.toggle(game);
+            if (!context.mounted) return;
+            ScaffoldMessenger.of(context)
+              ..hideCurrentSnackBar()
+              ..showSnackBar(
+                SnackBar(
+                  content: Text(
+                    added
+                        ? 'أُضيفت "${game.name}" إلى قائمة المفضلة'
+                        : 'أُزيلت "${game.name}" من قائمة المفضلة',
+                  ),
+                ),
+              );
+          },
+          behavior: HitTestBehavior.opaque,
+          child: Container(
+            width: 30,
+            height: 30,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: Colors.black.withOpacity(0.45),
+              border: Border.all(
+                color: saved
+                    ? EpicColors.cyan.withOpacity(0.9)
+                    : Colors.white.withOpacity(0.35),
+                width: 1,
+              ),
+            ),
+            child: Icon(
+              saved ? Icons.favorite_rounded : Icons.favorite_outline_rounded,
+              size: 15,
+              color: saved ? EpicColors.cyan : Colors.white,
+            ),
+          ),
+        );
+      },
     );
   }
 }
