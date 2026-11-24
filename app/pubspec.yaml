@@ -1,7 +1,7 @@
 name: flux_store
 description: "Flux — متجر ألعاب بأسلوب Epic Games Store، متصل بـ PHP API مع تحميلات حقيقية داخل التطبيق."
 publish_to: "none"
-version: 1.0.21+21
+version: 1.0.22+22
 
 environment:
   sdk: ">=3.0.0 <4.0.0"
@@ -17,10 +17,6 @@ dependencies:
   path_provider: ^2.1.1
   # طلب صلاحيات التخزين قبل التحميل
   permission_handler: ^11.0.1
-
-  # خدمات Firebase للمصادقة بالهاتف ورمز OTP
-  firebase_core: ^3.6.0
-  firebase_auth: ^5.3.1
 
   cupertino_icons: ^1.0.6
 

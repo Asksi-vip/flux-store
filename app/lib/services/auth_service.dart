@@ -1,35 +1,55 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../config.dart';
 import '../models/user_model.dart';
 
-/// خدمة المصادقة عبر Firebase:
-/// - تسجيل الدخول وإنشاء الحساب عبر رقم الهاتف + رمز التحقق (OTP)
-/// - دعم الدخول بكلمة المرور أو برمز OTP المباشر
-/// - إعادة تعيين كلمة المرور عبر كود OTP مرسل للهاتف
-/// - حفظ الجلسة محليًا واستعادتها تلقائيًا
+/// خدمة المصادقة الذاتية على سيرفر الخاص (بديل Firebase):
+/// - توليد رمز التحقق OTP على الخادم وإرساله عبر بوابة SMS التي تديرها انت
+/// - تسجيل الدخول وإنشاء الحساب برقم الهاتف + OTP + كلمة المرور
+/// - إعادة تعيين كلمة المرور عبر كود OTP المرسل للهاتف
+/// - جلسات محفوظة محليًا مع Bearer token من الخادم
 class AuthService extends ChangeNotifier {
   AuthService._();
 
   static final AuthService instance = AuthService._();
 
   static const String _kStorageKey = 'flux_auth_user_v1';
+  static const String _kTokenKey = 'flux_auth_token_v1';
   static const String _kPasswordMapKey = 'flux_user_pwd_hashes';
 
-  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final Dio _dio = Dio(
+    BaseOptions(
+      // ملف المصادقة على خادمك: <apiBaseUrl>/auth.php?action=...
+      baseUrl: AppConfig.apiBaseUrl,
+      connectTimeout: const Duration(seconds: 15),
+      receiveTimeout: const Duration(seconds: 20),
+      headers: {'Accept': 'application/json'},
+      // نقبل كل الحالات ونفحص ok/error يدويًا برسائل عربية واضحة
+      validateStatus: (code) => code != null && code >= 200 && code < 600,
+    ),
+  );
 
   UserModel? _currentUser;
+  String? _token;
   bool _initialized = false;
 
   /// المستخدم الحالي المسجل
   UserModel? get currentUser => _currentUser;
 
   /// هل المستخدم مسجل الدخول؟
-  bool get isLoggedIn => _currentUser != null || _auth.currentUser != null;
+  bool get isLoggedIn => _currentUser != null;
+
+  /// رمز التجربة من وضع debug (يظهر داخل شاشة إدخال الرمز فقط عندما
+  /// لا تكون بوابة SMS مفعلة على الخادم — مرة واحدة لكل طلب)
+  String? lastDevCode;
+
+  /// ثواني الانتظار قبل طلب رمز جديد (يعود من الخادم عند تجاوز الحد)
+  int? lastResendAfter;
 
   /// تهيئة الخدمة واستعادة الجلسة السابقة
   Future<void> init() async {
@@ -42,29 +62,34 @@ class AuthService extends ChangeNotifier {
       if (raw != null && raw.isNotEmpty) {
         _currentUser = UserModel.fromJson(jsonDecode(raw) as Map<String, dynamic>);
       }
+      _token = prefs.getString(_kTokenKey);
     } catch (_) {}
+    notifyListeners();
 
-    // مراقبة تغيرات حالة Firebase Auth
-    _auth.authStateChanges().listen((User? user) {
-      if (user != null) {
-        if (_currentUser == null || _currentUser!.uid != user.uid) {
-          _currentUser = UserModel(
-            uid: user.uid,
-            name: user.displayName ?? _currentUser?.name ?? 'لاعب FLUX',
-            phone: user.phoneNumber ?? _currentUser?.phone ?? '',
-            email: user.email,
-          );
-          _persist();
-        }
-      } else {
-        // المستخدم سجل الخروج من Firebase
-        if (_currentUser != null) {
-          _currentUser = null;
-          _persist();
-        }
+    // تحقق صامت من صلاحية الجلسة: إن رفض الخادم الجلسة صراحة نلغيها محليًا
+    if (_token != null) {
+      unawaited(_validateSession());
+    }
+  }
+
+  Future<void> _validateSession() async {
+    try {
+      final Response<Map<String, dynamic>> res = await _dio.get(
+        '/auth.php',
+        queryParameters: {'action': 'me'},
+        options: Options(headers: {'Authorization': 'Bearer $_token'}),
+      );
+      final data = res.data;
+      if (data != null && data['ok'] != true) {
+        // الجلسة منتهية أو غير صالحة على الخادم — خروج صامت
+        _currentUser = null;
+        _token = null;
+        await _persist();
+        notifyListeners();
       }
-      notifyListeners();
-    });
+    } catch (_) {
+      // تعذر الاتصال: نبقي الجلسة المحلية (وضع عدم الاتصال)
+    }
   }
 
   /// تنظيف وتوحيد رقم الهاتف بالصيغة الدولية E.164 (مثل +9647701234567)
@@ -77,12 +102,45 @@ class AuthService extends ChangeNotifier {
     return '$cc$clean';
   }
 
-  /// إزالة الرموز للحصول على أرقام فقط (لتوليد إيميل داخلي آمن لربط كلمة المرور)
+  /// إزالة الرموز للحصول على أرقام فقط
   static String cleanDigits(String phone) {
     return phone.replaceAll(RegExp(r'\D'), '');
   }
 
-  /// إرسال رمز التحقق (OTP) إلى رقم الهاتف عبر Firebase Phone Auth
+  // ---------- طبقة الاتصال بالخادم ----------
+
+  /// طلب POST موحد: يفحص ok/error ويعيد البيانات أو يرمي استثناء برسالة عربية
+  Future<Map<String, dynamic>> _post(String action, Map<String, dynamic> body) async {
+    final Response<Map<String, dynamic>> res = await _dio.post(
+      '/auth.php',
+      queryParameters: {'action': action},
+      data: body,
+    );
+    final Map<String, dynamic> data = res.data ?? <String, dynamic>{};
+
+    final bool ok = data['ok'] == true;
+    if (!ok) {
+      final int code = res.statusCode ?? 500;
+      String msg = (data['error'] as String?) ?? 'حدث خطأ غير متوقع، حاول مرة أخرى.';
+      if (data['resend_after'] is int) {
+        lastResendAfter = data['resend_after'] as int;
+      }
+      if (code >= 500) {
+        msg = 'تعذر الاتصال بخادم المصادقة حاليًا، حاول بعد قليل.';
+      }
+      throw Exception(msg);
+    }
+    return data;
+  }
+
+  /// رسالة تعذر الاتصال (بلا إنترنت / خادم متوقف)
+  Exception _networkError(Object e) {
+    return Exception('تعذر الاتصال بالخادم، يرجى التحقق من اتصال الإنترنت والمحاولة مرة أخرى.');
+  }
+
+  // ---------- العمليات ----------
+
+  /// إرسال رمز التحقق (OTP) إلى رقم الهاتف عبر خادمك الخاص
   Future<void> sendOtp({
     required String phone,
     required void Function(String verificationId, int? resendToken) onCodeSent,
@@ -92,26 +150,19 @@ class AuthService extends ChangeNotifier {
     final String normalized = normalizePhone(phone);
 
     try {
-      await _auth.verifyPhoneNumber(
-        phoneNumber: normalized,
-        timeout: const Duration(seconds: 60),
-        verificationCompleted: (PhoneAuthCredential credential) async {
-          if (onAutoVerify != null) {
-            onAutoVerify(credential);
-          }
-        },
-        verificationFailed: (FirebaseAuthException e) {
-          onError(_mapFirebaseError(e));
-        },
-        codeSent: (String verificationId, int? resendToken) {
-          onCodeSent(verificationId, resendToken);
-        },
-        codeAutoRetrievalTimeout: (String verificationId) {
-          // انتهاء مهلة الالتقاط التلقائي للرمز
-        },
-      );
+      final Map<String, dynamic> data = await _post('otp_request', {
+        'phone': normalized,
+        'purpose': 'register',
+      });
+
+      lastDevCode = data['dev_code'] as String?;
+      final int? resend = data['resend_after'] is int ? data['resend_after'] as int : null;
+      lastResendAfter = resend;
+      onCodeSent((data['session'] as String?) ?? '', resend);
+    } on Exception catch (e) {
+      onError(e.toString().replaceAll('Exception: ', ''));
     } catch (e) {
-      onError('فشل إرسال رمز التحقق: $e');
+      onError(_networkError(e).toString().replaceAll('Exception: ', ''));
     }
   }
 
@@ -124,51 +175,22 @@ class AuthService extends ChangeNotifier {
     required String smsCode,
   }) async {
     final String normalized = normalizePhone(phone);
-    final PhoneAuthCredential credential = PhoneAuthProvider.credential(
-      verificationId: verificationId,
-      smsCode: smsCode.trim(),
-    );
 
-    // 1) تسجيل الدخول برمز الهاتف إلى Firebase Auth
-    final UserCredential userCred = await _auth.signInWithCredential(credential);
-    final User? user = userCred.user;
-    if (user == null) {
-      throw Exception('فشل إنشاء الحساب عبر Firebase');
-    }
-
-    // 2) تحديث اسم المستخدم
-    await user.updateDisplayName(name.trim());
-
-    // 3) ربط كلمة المرور بحساب المستخدم عبر البريد الداخلي الآمن
-    final String virtualEmail = '${cleanDigits(normalized)}@fluxgames.store';
     try {
-      await user.linkWithCredential(
-        EmailAuthProvider.credential(
-          email: virtualEmail,
-          password: password,
-        ),
-      );
-    } catch (_) {
-      // إذا كان مرتبطًا سابقًا أو حدث تعارض، نحدّث كلمة المرور مباشرة
-      try {
-        await user.updatePassword(password);
-      } catch (_) {}
+      final Map<String, dynamic> data = await _post('register', {
+        'name': name.trim(),
+        'phone': normalized,
+        'password': password,
+        'session': verificationId,
+        'code': smsCode.trim(),
+      });
+
+      await _applySession(data, fallbackPhone: normalized, fallbackName: name.trim());
+    } on Exception {
+      rethrow;
+    } catch (e) {
+      throw _networkError(e);
     }
-
-    // 4) حفظ كلمة المرور محليًا كنسخة احتياطية لتسجيل الدخول السريع
-    await _saveLocalPassword(normalized, password);
-
-    // 5) تحديث نموذج المستخدم وحفظه
-    _currentUser = UserModel(
-      uid: user.uid,
-      name: name.trim(),
-      phone: normalized,
-      email: virtualEmail,
-      createdAt: DateTime.now(),
-    );
-
-    await _persist();
-    notifyListeners();
   }
 
   /// تسجيل الدخول برقم الهاتف وكلمة المرور
@@ -177,94 +199,66 @@ class AuthService extends ChangeNotifier {
     required String password,
   }) async {
     final String normalized = normalizePhone(phone);
-    final String virtualEmail = '${cleanDigits(normalized)}@fluxgames.store';
 
     try {
-      // محاولة تسجيل الدخول عبر Firebase Auth
-      final UserCredential cred = await _auth.signInWithEmailAndPassword(
-        email: virtualEmail,
-        password: password,
-      );
+      final Map<String, dynamic> data = await _post('login', {
+        'phone': normalized,
+        'password': password,
+      });
 
-      final User? user = cred.user;
-      if (user != null) {
-        _currentUser = UserModel(
-          uid: user.uid,
-          name: user.displayName ?? _currentUser?.name ?? 'لاعب FLUX',
-          phone: normalized,
-          email: virtualEmail,
-        );
-        await _persist();
-        notifyListeners();
-        return;
-      }
-    } on FirebaseAuthException catch (e) {
-      // فحص إذا كانت كلمة المرور مطابقة للمحفوظة محليًا
+      await _applySession(data, fallbackPhone: normalized);
+    } on Exception catch (e) {
+      // احتياط عدم الاتصال: كلمة المرور المحفوظة محليًا تفتح جلسة بلا خادم
       final bool localMatch = await _verifyLocalPassword(normalized, password);
       if (localMatch) {
         _currentUser = UserModel(
           uid: 'flux_${cleanDigits(normalized)}',
           name: _currentUser?.name ?? 'لاعب FLUX',
           phone: normalized,
-          email: virtualEmail,
-        );
-        await _persist();
-        notifyListeners();
-        return;
-      }
-
-      if (e.code == 'user-not-found' || e.code == 'invalid-credential') {
-        throw Exception('لا يوجد حساب مسجل بهذا الرقم، أو كلمة المرور غير صحيحة.');
-      } else if (e.code == 'wrong-password') {
-        throw Exception('كلمة المرور غير صحيحة، يرجى المحاولة مرة أخرى.');
-      } else {
-        throw Exception(_mapFirebaseError(e));
-      }
-    } catch (e) {
-      // فحص النسخة المحلية الاحتياطية
-      final bool localMatch = await _verifyLocalPassword(normalized, password);
-      if (localMatch) {
-        _currentUser = UserModel(
-          uid: 'flux_${cleanDigits(normalized)}',
-          name: _currentUser?.name ?? 'لاعب FLUX',
-          phone: normalized,
-          email: virtualEmail,
         );
         await _persist();
         notifyListeners();
         return;
       }
       throw Exception(e.toString().replaceAll('Exception: ', ''));
+    } catch (e) {
+      // الخادم غير متصل: جرّب النسخة المحلية الاحتياطية
+      final bool localMatch = await _verifyLocalPassword(normalized, password);
+      if (localMatch) {
+        _currentUser = UserModel(
+          uid: 'flux_${cleanDigits(normalized)}',
+          name: _currentUser?.name ?? 'لاعب FLUX',
+          phone: normalized,
+        );
+        await _persist();
+        notifyListeners();
+        return;
+      }
+      throw _networkError(e);
     }
   }
 
-  /// تسجيل الدخول المباشر برمز OTP (بدون كلمة مرور)
+  /// تسجيل الدخول المباشر برمز OTP (بدون كلمة مرور) — ينشئ حسابًا تلقائيًا لرقم جديد
   Future<void> loginWithOtp({
     required String phone,
     required String verificationId,
     required String smsCode,
   }) async {
     final String normalized = normalizePhone(phone);
-    final PhoneAuthCredential credential = PhoneAuthProvider.credential(
-      verificationId: verificationId,
-      smsCode: smsCode.trim(),
-    );
 
-    final UserCredential cred = await _auth.signInWithCredential(credential);
-    final User? user = cred.user;
-    if (user == null) {
-      throw Exception('فشل التحقق من رمز OTP');
+    try {
+      final Map<String, dynamic> data = await _post('otp_login', {
+        'phone': normalized,
+        'session': verificationId,
+        'code': smsCode.trim(),
+      });
+
+      await _applySession(data, fallbackPhone: normalized);
+    } on Exception {
+      rethrow;
+    } catch (e) {
+      throw _networkError(e);
     }
-
-    _currentUser = UserModel(
-      uid: user.uid,
-      name: user.displayName ?? _currentUser?.name ?? 'لاعب FLUX',
-      phone: normalized,
-      email: user.email,
-    );
-
-    await _persist();
-    notifyListeners();
   }
 
   /// إعادة تعيين كلمة المرور عبر رمز OTP تم التحقق منه
@@ -275,77 +269,81 @@ class AuthService extends ChangeNotifier {
     required String newPassword,
   }) async {
     final String normalized = normalizePhone(phone);
-    final PhoneAuthCredential credential = PhoneAuthProvider.credential(
-      verificationId: verificationId,
-      smsCode: smsCode.trim(),
-    );
 
-    // 1) تأكيد هوية مالك الهاتف بالرمز
-    final UserCredential cred = await _auth.signInWithCredential(credential);
-    final User? user = cred.user;
-    if (user == null) {
-      throw Exception('رمز التحقق غير صحيح أو منتهي الصلاحية');
-    }
-
-    // 2) تحديث كلمة المرور في Firebase
-    final String virtualEmail = '${cleanDigits(normalized)}@fluxgames.store';
     try {
-      await user.updatePassword(newPassword);
-    } catch (_) {
-      try {
-        await user.linkWithCredential(
-          EmailAuthProvider.credential(email: virtualEmail, password: newPassword),
-        );
-      } catch (_) {}
+      final Map<String, dynamic> data = await _post('reset_password', {
+        'phone': normalized,
+        'session': verificationId,
+        'code': smsCode.trim(),
+        'new_password': newPassword,
+      });
+
+      await _applySession(data, fallbackPhone: normalized);
+      await _saveLocalPassword(normalized, newPassword);
+    } on Exception {
+      rethrow;
+    } catch (e) {
+      throw _networkError(e);
     }
-
-    // 3) تحديث كلمة المرور محليًا
-    await _saveLocalPassword(normalized, newPassword);
-
-    _currentUser = UserModel(
-      uid: user.uid,
-      name: user.displayName ?? _currentUser?.name ?? 'لاعب FLUX',
-      phone: normalized,
-      email: virtualEmail,
-    );
-
-    await _persist();
-    notifyListeners();
   }
 
   /// تغيير كلمة المرور للمستخدم المسجل حاليًا
   Future<void> changePassword(String newPassword) async {
-    final User? user = _auth.currentUser;
-    if (user != null) {
-      await user.updatePassword(newPassword);
-      if (_currentUser?.phone.isNotEmpty == true) {
-        await _saveLocalPassword(_currentUser!.phone, newPassword);
-      }
-    } else {
-      if (_currentUser?.phone.isNotEmpty == true) {
-        await _saveLocalPassword(_currentUser!.phone, newPassword);
-      } else {
-        throw Exception('يجب تسجيل الدخول أولًا');
-      }
+    if (_currentUser == null) {
+      throw Exception('يجب تسجيل الدخول أولًا');
+    }
+    final String phone = _currentUser!.phone;
+
+    try {
+      await _post('change_password', {'new_password': newPassword});
+      await _saveLocalPassword(phone, newPassword);
+    } on Exception {
+      // الخادم رفض (مثلاً 401) — رسالته أوضح للمستخدم
+      rethrow;
+    } catch (e) {
+      // تعذر الاتصال: نحدّث النسخة المحلية على الأقل حتى تُرفع لاحقًا
+      await _saveLocalPassword(phone, newPassword);
+      throw _networkError(e);
     }
   }
 
   /// تسجيل الخروج
   Future<void> logout() async {
-    try {
-      await _auth.signOut();
-    } catch (_) {}
-
     _currentUser = null;
+    _token = null;
     try {
       final SharedPreferences prefs = await SharedPreferences.getInstance();
       await prefs.remove(_kStorageKey);
+      await prefs.remove(_kTokenKey);
     } catch (_) {}
 
     notifyListeners();
   }
 
-  // ---------- حفظ واسترجاع محلي ----------
+  // ---------- إدارة الجلسة ----------
+
+  /// تطبيق جلسة ناجحة من الخادم: حفظ المستخدم + الرمز
+  Future<void> _applySession(
+    Map<String, dynamic> data, {
+    required String fallbackPhone,
+    String? fallbackName,
+  }) async {
+    final Map<String, dynamic> userMap =
+        (data['user'] as Map<String, dynamic>?) ?? <String, dynamic>{};
+
+    _token = data['token'] as String?;
+    _currentUser = UserModel(
+      uid: (userMap['uid'] as String?) ?? 'flux_${cleanDigits(fallbackPhone)}',
+      name: (userMap['name'] as String?) ?? fallbackName ?? 'لاعب FLUX',
+      phone: (userMap['phone'] as String?) ?? fallbackPhone,
+      createdAt: userMap['created_at'] is String && (userMap['created_at'] as String).isNotEmpty
+          ? DateTime.tryParse(userMap['created_at'] as String)
+          : DateTime.now(),
+    );
+
+    await _persist();
+    notifyListeners();
+  }
 
   Future<void> _persist() async {
     try {
@@ -354,6 +352,11 @@ class AuthService extends ChangeNotifier {
         await prefs.setString(_kStorageKey, jsonEncode(_currentUser!.toJson()));
       } else {
         await prefs.remove(_kStorageKey);
+      }
+      if (_token != null) {
+        await prefs.setString(_kTokenKey, _token!);
+      } else {
+        await prefs.remove(_kTokenKey);
       }
     } catch (_) {}
   }
@@ -379,30 +382,10 @@ class AuthService extends ChangeNotifier {
       return false;
     }
   }
+}
 
-  /// تحويل رسائل أخطاء Firebase إلى العربية واضحة
-  String _mapFirebaseError(FirebaseAuthException e) {
-    switch (e.code) {
-      case 'invalid-phone-number':
-        return 'رقم الهاتف غير صالح، يرجى كتابة الرقم بالصيغة الدولية الصحيحة.';
-      case 'invalid-verification-code':
-        return 'رمز التحقق (OTP) غير صحيح، يرجى التأكد من الرمز وإعادة المحاولة.';
-      case 'session-expired':
-        return 'انتهت صلاحية رمز التحقق، يرجى طلب رمز جديد.';
-      case 'too-many-requests':
-        return 'تم إرسال طلبات كثيرة جدًا في وقت قصير. يرجى الانتظار دقيقة ثم المحاولة.';
-      case 'quota-exceeded':
-        return 'تم استهلاك الحصة المؤقتة لإرسال رسائل التحقق، حاول لاحقًا.';
-      case 'network-request-failed':
-        return 'تعذر الاتصال بالخادم، يرجى التحقق من اتصال الإنترنت.';
-      case 'user-disabled':
-        return 'تم تعطيل هذا الحساب، يرجى التواصل مع الدعم الفني.';
-      case 'wrong-password':
-        return 'كلمة المرور غير صحيحة.';
-      case 'user-not-found':
-        return 'لا يوجد حساب مرتبط برقم الهاتف هذا.';
-      default:
-        return e.message ?? 'حدث خطأ غير متوقع أثناء معالجة الطلب.';
-    }
-  }
+/// عنصر بديل عن نوع Firebase المحذوف — لم يعد مستخدمًا فعليًا لكنه يحفظ
+/// توقيع الدالة sendOtp كما هو دون أي اعتماد خارجي.
+class PhoneAuthCredential {
+  const PhoneAuthCredential();
 }

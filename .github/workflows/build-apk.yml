@@ -36,54 +36,22 @@ jobs:
         working-directory: app
         run: flutter create . --platforms android --org com.fluxstore
 
-      # نسخ ملف إعدادات Firebase وتفعيله في Gradle
-      - name: إعداد وتفعيل Firebase (Google Services)
+      # ضبط applicationId على com.fluxstore.app (يحافظ على تحديث النسخ المثبتة مكانها)
+      # + minSdk 23. المصادقة صارت ذاتية عبر سيرفر الخاص — لا Firebase بعد الآن.
+      - name: ضبط applicationId و minSdk
         working-directory: app
         run: |
-          cp ../ci-assets/google-services.json android/app/google-services.json
           python3 - <<'PY'
-          import os, re
-
-          # 1. إعداد settings.gradle لدعم إضافة google-services
-          settings_p = "android/settings.gradle"
-          if os.path.exists(settings_p):
-              s_txt = open(settings_p, encoding="utf-8").read()
-              if "com.google.gms.google-services" not in s_txt and "plugins {" in s_txt:
-                  s_txt = s_txt.replace("plugins {", 'plugins {\n    id "com.google.gms.google-services" version "4.4.2" apply false', 1)
-                  open(settings_p, "w", encoding="utf-8").write(s_txt)
-
-          # 2. إعداد build.gradle الجذر
-          root_bg = "android/build.gradle"
-          if os.path.exists(root_bg):
-              r_txt = open(root_bg, encoding="utf-8").read()
-              if "com.google.gms:google-services" not in r_txt:
-                  if "dependencies {" in r_txt:
-                      r_txt = r_txt.replace("dependencies {", "dependencies {\n        classpath 'com.google.gms:google-services:4.4.2'", 1)
-                  else:
-                      r_txt = "buildscript {\n    repositories {\n        google()\n        mavenCentral()\n    }\n    dependencies {\n        classpath 'com.google.gms:google-services:4.4.2'\n    }\n}\n\n" + r_txt
-                  open(root_bg, "w", encoding="utf-8").write(r_txt)
-
-          # 3. إعداد android/app/build.gradle
+          import re
           app_bg = "android/app/build.gradle"
-          if os.path.exists(app_bg):
-              a_txt = open(app_bg, encoding="utf-8").read()
-              # تفعيل إضافة com.google.gms.google-services
-              if "com.google.gms.google-services" not in a_txt:
-                  a_txt += "\napply plugin: 'com.google.gms.google-services'\n"
-              # ضبط applicationId على com.fluxstore.app ليتطابق مع Firebase
-              a_txt = re.sub(r'applicationId\s*=?\s*["\'][^"\']+["\']', 'applicationId = "com.fluxstore.app"', a_txt)
-              # ضبط minSdk ليكون 23 على الأقل لمتطلبات Firebase Auth —
-              # AGP 8 رفض minSdkVersion = 23 (الخاصية القديمة صارت نهائية):
-              # الصيغة الصحيحة هي minSdk = 23، والنمط يغطي قالب flutter بأشكاله
-              # (minSdkVersion flutter.minSdkVersion أو minSdk = flutter.minSdkVersion)
-              a_txt = re.sub(r'minSdk(?:Version)?\s*=?\s*(?:flutter\.minSdkVersion|\d+)', 'minSdk = 23', a_txt)
-              if "minSdk" not in a_txt:
-                  a_txt = a_txt.replace("defaultConfig {", "defaultConfig {\n        minSdk = 23", 1)
-              # تفعيل MultiDex
-              if "multiDexEnabled" not in a_txt:
-                  a_txt = a_txt.replace("defaultConfig {", "defaultConfig {\n        multiDexEnabled true", 1)
-              open(app_bg, "w", encoding="utf-8").write(a_txt)
-          print("Firebase google-services wired successfully into Android build!")
+          a_txt = open(app_bg, encoding="utf-8").read()
+          a_txt = re.sub(r'applicationId\s*=?\s*["\'][^"\']+["\']', 'applicationId = "com.fluxstore.app"', a_txt)
+          # الصيغة الصحيحة مع AGP 8 هي minSdk = 23 (minSdkVersion صارت نهائية)
+          a_txt = re.sub(r'minSdk(?:Version)?\s*=?\s*(?:flutter\.minSdkVersion|\d+)', 'minSdk = 23', a_txt)
+          if "minSdk" not in a_txt:
+              a_txt = a_txt.replace("defaultConfig {", "defaultConfig {\n        minSdk = 23", 1)
+          open(app_bg, "w", encoding="utf-8").write(a_txt)
+          print("applicationId/minSdk configured!")
           PY
 
       # ضروري: صلاحية الإنترنت + الشبكة + التخزين + الخلفية (Foreground Service) + الإشعارات + تثبيت APK
@@ -95,8 +63,7 @@ jobs:
           s = open(p, encoding="utf-8").read()
           if "xmlns:tools=" not in s:
               s = s.replace("<manifest", '<manifest\n    xmlns:tools="http://schemas.android.com/tools"', 1)
-          if "<uses-sdk" not in s:
-              s = s.replace("<application", '<uses-sdk tools:overrideLibrary="com.google.firebase.auth"/>\n    <application', 1)
+          # (سطر تجاوز مكتبة Firebase أُزيل — المصادقة صارت ذاتية عبر الخادم)
           perms = {
               "android.permission.INTERNET": '<uses-permission android:name="android.permission.INTERNET"/>\n    ',
               "android.permission.ACCESS_NETWORK_STATE": '<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    ',

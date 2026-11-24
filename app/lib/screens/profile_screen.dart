@@ -11,7 +11,7 @@ import '../widgets/fade_in_slide.dart';
 import 'auth_screen.dart';
 
 /// حساب اللاعب بأسلوب Epic Games:
-/// - ملف تعريف اللاعب المرتبط بحساب Firebase
+/// - ملف تعريف اللاعب المرتبط بحساب سيرفر الخاص (بديل Firebase)
 /// - تسجيل الدخول وإنشاء الحساب برقم الهاتف و OTP
 /// - تغيير كلمة المرور وتسجيل الخروج
 /// - إحصائيات المكتبة وحالة خادم الـ API
@@ -494,7 +494,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
             ),
             const SizedBox(height: 12),
-            _infoRow('نظام المصادقة', 'Firebase Phone Auth + OTP (flux-games)'),
+            _infoRow('نظام المصادقة', 'مصادقة ذاتية OTP عبر خادم الخاص'),
             _infoRow('عنوان الخادم', AppConfig.baseUrl),
             _infoRow('نقطة الألعاب', '${AppConfig.apiBaseUrl}/games/'),
             _infoRow('إصدار التطبيق', '1.0.18'),

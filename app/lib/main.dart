@@ -1,10 +1,8 @@
 import 'dart:async';
 
-import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
 import 'controllers/library_controller.dart';
-import 'firebase_options.dart';
 import 'screens/main_shell.dart';
 import 'services/auth_service.dart';
 import 'services/download_manager.dart';
@@ -12,20 +10,11 @@ import 'services/library_service.dart';
 import 'theme/app_theme.dart';
 
 /// نقطة انطلاق تطبيق Flux — متجر ألعاب بأسلوب Epic Games.
-/// الدخول مباشرة إلى الصفحة الرئيسية مع تهيئة Firebase والمصادقة.
+/// الدخول مباشرة إلى الصفحة الرئيسية مع تهيئة المصادقة الذاتية (بديل Firebase).
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // تهيئة Firebase لمصادقة رقم الهاتف و OTP
-  try {
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
-  } catch (e) {
-    debugPrint('Firebase initialization note: $e');
-  }
-
-  // استعادة جلسة المستخدم
+  // استعادة جلسة المستخدم (المصادقة الذاتية عبر سيرفر الخاص)
   unawaited(AuthService.instance.init());
 
   // استعادة التنزيلات المحفوظة واستكمالها تلقائيًا بعد إعادة فتح التطبيق (مثل Epic)

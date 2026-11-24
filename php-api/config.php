@@ -23,3 +23,25 @@ define('FLUX_RESOLVE_ALLOW_LOCAL', false);
 // ثم يكفي هذا الرابط كما هو — نقطة محادثة متوافقة مع OpenAI بدون مفتاح.
 define('FLUX_AI_URL', 'http://camillecyrm.serv00.net/flux/ai/v1/chat/completions');
 define('FLUX_AI_MODEL', 'gpt-4o'); // اسم مستعار يوجهه الوكيل لأفضل نموذج مجاني
+
+// ================= نظام المصادقة الذاتي (بديل Firebase) — auth.php =================
+// بوابة إرسال رموز التحقق OTP. القيم الممكنة:
+//   debug   ← بلا إرسال فعلي: الرمز يظهر داخل التطبيق مباشرة (مجاني — للتجربة)
+//   generic ← أي بوابة SMS بعنوان قالب (أغلب المزودين العراقيين والعالميين)
+//   twilio  ← Twilio (بطاقة مطلوبة)
+//   semysms ← تطبيق Semysms: يرسل من هاتف أندرويد خاص بك (شبه مجاني)
+define('FLUX_SMS_DRIVER', 'debug');
+
+// إعدادات generic: عنوان فيه {phone} و {message} + ترويسات اختيارية (مفتاح API)
+// مثال مزود عراقي: 'https://api.provider.iq/api/SendSMS?api_key=XXX&number={phone}&msg={message}'
+define('FLUX_SMS_URL', 'https://example.com/api/sms?key=KEY&to={phone}&text={message}');
+define('FLUX_SMS_HEADERS', '[]'); // مثل: '{"Authorization": "Bearer XXX"}'
+
+// إعدادات twilio
+define('FLUX_TWILIO_SID', '');
+define('FLUX_TWILIO_AUTH_TOKEN', '');
+define('FLUX_TWILIO_FROM', '');
+
+// إعدادات semysms (ثبت تطبيق Semysms على هاتفك بشراء رصيد جهاز)
+define('FLUX_SEMYSMS_DEVICE_ID', '');
+define('FLUX_SEMYSMS_API_TOKEN', '');

@@ -334,6 +334,8 @@ class _AuthScreenState extends State<AuthScreen> {
     final TextEditingController newPwdCtrl = TextEditingController();
     final TextEditingController confirmNewPwdCtrl = TextEditingController();
     String otpCode = '';
+    // وضع التجربة: رمز التحقق يعود من الخادم مباشرة بدل الرسالة النصية
+    final String? devCode = AuthService.instance.lastDevCode;
 
     showModalBottomSheet(
       context: context,
@@ -365,6 +367,22 @@ class _AuthScreenState extends State<AuthScreen> {
                       style: const TextStyle(color: EpicColors.textPrimary, fontSize: 16, fontWeight: FontWeight.w800),
                     ),
                     const SizedBox(height: 14),
+                    if (devCode != null) ...[
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: EpicColors.cyan.withOpacity(.12),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: EpicColors.cyan.withOpacity(.4)),
+                        ),
+                        child: Text(
+                          'وضع التجربة (بوابة الرسائل غير مفعلة) — رمز التحقق: $devCode',
+                          style: const TextStyle(color: EpicColors.cyan, fontSize: 12, fontWeight: FontWeight.w700),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                    ],
                     if (err != null) ...[
                       Text(err!, style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
                       const SizedBox(height: 10),
@@ -460,6 +478,8 @@ class _AuthScreenState extends State<AuthScreen> {
     required Future<void> Function(String code) onVerify,
   }) {
     String otp = '';
+    // وضع التجربة (بوابة SMS غير مفعلة على الخادم): الرمز يعود من الخادم مباشرة
+    final String? devCode = AuthService.instance.lastDevCode;
 
     showModalBottomSheet(
       context: context,
@@ -509,6 +529,22 @@ class _AuthScreenState extends State<AuthScreen> {
                     'أرسلنا رمز التحقق المكوّن من 6 أرقام إلى الرقم:\n$phone',
                     style: const TextStyle(color: EpicColors.textSecondary, fontSize: 13, height: 1.5),
                   ),
+                  if (devCode != null) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: EpicColors.cyan.withOpacity(.12),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: EpicColors.cyan.withOpacity(.4)),
+                      ),
+                      child: Text(
+                        'وضع التجربة (بوابة الرسائل غير مفعلة) — رمز التحقق: $devCode',
+                        style: const TextStyle(color: EpicColors.cyan, fontSize: 12, fontWeight: FontWeight.w700),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 18),
                   if (sheetError != null) ...[
                     Container(
