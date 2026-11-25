@@ -54,10 +54,10 @@ class _MainShellState extends State<MainShell> {
   ];
 
   static const List<String> _labels = [
-    'المتجر',
-    'المكتبة',
-    'المفضلة',
-    'التنزيلات',
+    'Store',
+    'Library',
+    'Wishlist',
+    'Downloads',
   ];
 
   void _setTab(int i) => setState(() => _index = i);
@@ -123,7 +123,7 @@ class _MainShellState extends State<MainShell> {
                   border: Border.all(color: EpicColors.border),
                 ),
                 child: const Text(
-                  'التنزيلات',
+                  'Downloads',
                   style: TextStyle(
                     color: EpicColors.textSecondary,
                     fontSize: 12.5,
@@ -145,7 +145,7 @@ class _MainShellState extends State<MainShell> {
               }
             },
             icon: const Icon(Icons.search_rounded, size: 22),
-            tooltip: 'البحث',
+            tooltip: 'Search',
           ),
           ListenableBuilder(
             listenable: AuthService.instance,
@@ -175,7 +175,7 @@ class _MainShellState extends State<MainShell> {
                         ),
                       )
                     : const Icon(Icons.person_outline_rounded, size: 22),
-                tooltip: loggedIn ? user.name : 'حسابي',
+                tooltip: loggedIn ? user.name : 'Account',
               );
             },
           ),

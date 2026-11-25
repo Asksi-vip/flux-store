@@ -54,7 +54,7 @@ class ApiService {
   static const String _kGamePrefix = 'flux_cache_game_';
 
   /// الرسالة الموحدة عند انقطاع الإنترنت — بدل رسائل الخادم التقنية القديمة.
-  static const String offlineMessage = 'فشل الاتصال بالإنترنت';
+  static const String offlineMessage = 'Connection failed';
 
   /// تحويل أخطاء dio إلى رسائل عربية مفهومة للمستخدم.
   String _friendlyError(DioException e) {
@@ -67,9 +67,9 @@ class ApiService {
         return offlineMessage;
       case DioExceptionType.badResponse:
         final code = e.response?.statusCode ?? 0;
-        if (code == 404) return 'العنصر المطلوب غير موجود';
-        if (code >= 500) return 'خطأ في الخادم، حاول بعد قليل';
-        return 'فشل الطلب (رمز $code)';
+        if (code == 404) return 'Not found';
+        if (code >= 500) return 'Server error, try again later';
+        return 'Request failed (code $code)';
       default:
         return offlineMessage;
     }

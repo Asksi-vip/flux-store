@@ -77,7 +77,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                   fontSize: 13.5,
                 ),
                 decoration: InputDecoration(
-                  hintText: 'بحث في التنزيلات',
+                  hintText: 'Search downloads',
                   hintStyle: const TextStyle(
                     color: EpicColors.textSecondary,
                     fontSize: 13,
@@ -133,7 +133,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
           SizedBox(height: 60),
           Center(
             child: Text(
-              'لا توجد نتائج مطابقة في تنزيلاتك',
+              'No matching downloads found',
               style: TextStyle(
                 color: EpicColors.textSecondary,
                 fontSize: 13.5,
@@ -159,7 +159,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                 color: EpicColors.cyan,
               ),
               label: const Text(
-                'عرض مكتبتي',
+                'Browse your library',
                 style: TextStyle(
                   color: EpicColors.cyan,
                   fontSize: 12,
@@ -230,7 +230,7 @@ class _EmptyDownloads extends StatelessWidget {
             ),
             const SizedBox(height: 18),
             const Text(
-              'لا توجد تنزيلات بعد',
+              'Nothing here yet',
               style: TextStyle(
                 color: EpicColors.textPrimary,
                 fontSize: 16,
@@ -239,7 +239,7 @@ class _EmptyDownloads extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             const Text(
-              'الألعاب المجانية تُحمَّل مباشرة من صفحتها —\nويكمل التحميل بالخلفية حتى لو خرجت من التطبيق',
+              'Free games download directly from their page —\ndownloads continue in the background even after you leave',
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: EpicColors.textSecondary,
@@ -265,7 +265,7 @@ class _EmptyDownloads extends StatelessWidget {
                 color: EpicColors.cyan,
               ),
               label: const Text(
-                'عرض مكتبتي',
+                'Browse your library',
                 style: TextStyle(
                   color: EpicColors.cyan,
                   fontSize: 13,
@@ -289,16 +289,16 @@ class _TaskRow extends StatelessWidget {
   final VoidCallback onOpen;
 
   (String, Color) get _status {
-    if (task.moving) return ('جارٍ تثبيت ملفات اللعبة…', EpicColors.blue);
+    if (task.moving) return ('Installing…', EpicColors.blue);
     switch (task.state) {
       case DownloadTaskState.downloading:
-        return ('جارٍ التحميل…', EpicColors.blue);
+        return ('Downloading…', EpicColors.blue);
       case DownloadTaskState.waitingNetwork:
-        return ('بانتظار الشبكة — سيستكمل تلقائيًا', Colors.orange);
+        return ('Waiting for network — resumes automatically', Colors.orange);
       case DownloadTaskState.paused:
-        return ('متوقف مؤقتًا', EpicColors.textSecondary);
+        return ('Download Paused', EpicColors.textSecondary);
       case DownloadTaskState.completed:
-        return task.installed ? ('مثبتة على جهازك', EpicColors.success) : ('مكتمل', EpicColors.success);
+        return task.installed ? ('Installed on this device', EpicColors.success) : ('Complete', EpicColors.success);
     }
   }
 
@@ -374,7 +374,7 @@ class _TaskRow extends StatelessWidget {
                   Text(
                     done
                         ? '$status — ${formatBytes(task.totalBytes)}'
-                        : '$status · ${formatBytes(task.downloadedBytes)} من ${formatBytes(task.totalBytes)}',
+                        : '$status · ${formatBytes(task.downloadedBytes)} of ${formatBytes(task.totalBytes)}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -398,7 +398,7 @@ class _TaskRow extends StatelessWidget {
                     children: [
                       Text(
                         done
-                            ? (task.installed ? 'جاهزة للتشغيل' : 'جاهزة للتثبيت')
+                            ? (task.installed ? 'Ready to Play' : 'Ready to Install')
                             : '${(task.progress * 100).toStringAsFixed(0)}%'
                                 '${task.state == DownloadTaskState.downloading ? ' — ${formatBytes(task.speed)}/ث' : ''}',
                         style: TextStyle(
@@ -466,7 +466,7 @@ class _CircleAction extends StatelessWidget {
             borderRadius: BorderRadius.circular(15),
           ),
           child: Text(
-            task.installed ? 'تشغيل' : 'تثبيت',
+            task.installed ? 'Open' : 'Install',
             style: const TextStyle(
               color: Colors.white,
               fontSize: 11.5,

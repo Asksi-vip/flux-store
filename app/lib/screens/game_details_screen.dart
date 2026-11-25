@@ -45,10 +45,10 @@ class _GameDetailsScreenState extends State<GameDetailsScreen> {
       ..showSnackBar(
         SnackBar(
           content: Text(
-            wasIn ? 'تمت الإزالة من المكتبة' : 'تمت الإضافة إلى مكتبتك',
+            wasIn ? 'Removed from library' : 'Added to your library',
           ),
           action: SnackBarAction(
-            label: wasIn ? 'تراجع' : 'إزالة',
+            label: wasIn ? 'Undo' : 'Remove',
             onPressed: () {
               if (wasIn) {
                 widget.controller.add(game);
@@ -68,7 +68,7 @@ class _GameDetailsScreenState extends State<GameDetailsScreen> {
       ..showSnackBar(
         const SnackBar(
           content: Text(
-            'ملفات التحميل غير مضافة لهذه اللعبة بعد — أضف رابط APK من لوحة الإدارة',
+            'No download files yet — add an APK link from the admin portal',
           ),
         ),
       );
@@ -194,7 +194,7 @@ class _GameDetailsScreenState extends State<GameDetailsScreen> {
                         const SizedBox(width: 12),
                         if (releaseYear.isNotEmpty)
                           Text(
-                            'الإصدار: $releaseYear',
+                            'Released: $releaseYear',
                             style: const TextStyle(
                               color: EpicColors.textSecondary,
                               fontSize: 12,
@@ -232,7 +232,7 @@ class _GameDetailsScreenState extends State<GameDetailsScreen> {
                               ? KeyedSubtree(
                                   key: const ValueKey<String>('in'),
                                   child: EpicButton(
-                                    label: 'في المكتبة',
+                                    label: 'In Library',
                                     variant: EpicButtonVariant.success,
                                     icon: Icons.check_circle_outline_rounded,
                                     onPressed: _toggleLibrary,
@@ -242,12 +242,12 @@ class _GameDetailsScreenState extends State<GameDetailsScreen> {
                               key: const ValueKey<String>('out'),
                               child: game.isFree
                                   ? EpicButton(
-                                      label: 'تثبيت مباشر',
+                                      label: 'Get',
                                       icon: Icons.download_rounded,
                                       onPressed: _installNotAvailable,
                                     )
                                   : EpicButton(
-                                      label: 'أضف إلى المكتبة',
+                                      label: 'Add to Library',
                                       icon: Icons.add_circle_outline_rounded,
                                       onPressed: _toggleLibrary,
                                     ),
@@ -268,9 +268,9 @@ class _GameDetailsScreenState extends State<GameDetailsScreen> {
                             Expanded(child: PriceTag(game: game, fontSize: 16)),
                             if (game.hasDiscount)
                               Text(
-                                'وفّر \$${(game.price - game.finalPrice).toStringAsFixed(2)}',
+                                'Save \$${(game.price - game.finalPrice).toStringAsFixed(2)}',
                                 style: const TextStyle(
-                                  color: EpicColors.cyan,
+                                  color: EpicColors.saleOrange,
                                   fontSize: 13,
                                   fontWeight: FontWeight.w700,
                                 ),
@@ -285,7 +285,7 @@ class _GameDetailsScreenState extends State<GameDetailsScreen> {
                     // بطاقة معلومات بنمط سوق أبِل: المطور، التواريخ، الحجم، الإصدار، الحزمة
                     if (_hasInfoRows()) ...[
                       const Text(
-                        'معلومات',
+                        'Information',
                         style: TextStyle(
                           color: EpicColors.textPrimary,
                           fontSize: 18,
@@ -310,7 +310,7 @@ class _GameDetailsScreenState extends State<GameDetailsScreen> {
                     // معلومات التحميل: الإصدار، الحجم، وملفات OBB/Data بمساراتها التلقائية
                     if (game.download != null && game.download!.available) ...[
                       const Text(
-                        'معلومات التحميل',
+                        'Download Details',
                         style: TextStyle(
                           color: EpicColors.textPrimary,
                           fontSize: 18,
@@ -340,8 +340,8 @@ class _GameDetailsScreenState extends State<GameDetailsScreen> {
                                 Expanded(
                                   child: Text(
                                     game.download!.version.isNotEmpty
-                                        ? 'الإصدار ${game.download!.version}'
-                                        : 'متاحة للتحميل المباشر',
+                                        ? 'Version ${game.download!.version}'
+                                        : 'Available for direct download',
                                     style: const TextStyle(
                                       color: EpicColors.textPrimary,
                                       fontSize: 13,
@@ -381,7 +381,7 @@ class _GameDetailsScreenState extends State<GameDetailsScreen> {
                                         ),
                                         const SizedBox(height: 2),
                                         Text(
-                                          'يُحفظ تلقائيًا في: ${f.installPath}',
+                                          'Saved automatically to: ${f.installPath}',
                                           style: const TextStyle(
                                             color: EpicColors.textSecondary,
                                             fontSize: 10,
@@ -394,7 +394,7 @@ class _GameDetailsScreenState extends State<GameDetailsScreen> {
                                 ),
                             const SizedBox(height: 6),
                             const Text(
-                              'استكمال تلقائي: إذا انقطع الإنترنت أو أُغلق التطبيق، يكمل التحميل من نفس النقطة عند العودة',
+                              'Auto-resume: if the connection drops or the app closes, the download continues from the same point when you return',
                               style: TextStyle(
                                 color: EpicColors.textSecondary,
                                 fontSize: 10.5,
@@ -408,7 +408,7 @@ class _GameDetailsScreenState extends State<GameDetailsScreen> {
                     const SizedBox(height: 20),
                     // الوصف مع إمكانية التوسيع (انتقال متحرك)
                     const Text(
-                      'عن اللعبة',
+                      'About',
                       style: TextStyle(
                         color: EpicColors.textPrimary,
                         fontSize: 18,
@@ -446,7 +446,7 @@ class _GameDetailsScreenState extends State<GameDetailsScreen> {
                         padding: EdgeInsets.zero,
                       ),
                       child: Text(
-                        _expanded ? 'عرض أقل' : 'اقرأ المزيد',
+                        _expanded ? 'Read less' : 'Read more',
                         style: const TextStyle(
                           color: EpicColors.cyan,
                           fontSize: 13,
@@ -457,7 +457,7 @@ class _GameDetailsScreenState extends State<GameDetailsScreen> {
                     const SizedBox(height: 12),
                     // مقترحات من نفس الفئة
                     Text(
-                      'قد يعجبك أيضًا',
+                      'You May Also Like',
                       style: const TextStyle(
                         color: EpicColors.textPrimary,
                         fontSize: 18,
@@ -466,7 +466,7 @@ class _GameDetailsScreenState extends State<GameDetailsScreen> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'من فئة ${game.categoryDisplay}',
+                      'From ${game.categoryDisplay}',
                       style: const TextStyle(
                         color: EpicColors.textSecondary,
                         fontSize: 12,
@@ -493,7 +493,7 @@ class _GameDetailsScreenState extends State<GameDetailsScreen> {
                             .toList();
                         if (similar.isEmpty) {
                           return const Text(
-                            'لا توجد ألعاب مشابهة بعد',
+                            'No similar games yet',
                             style: TextStyle(
                               color: EpicColors.textSecondary,
                               fontSize: 13,
@@ -636,7 +636,7 @@ class _GameDetailsScreenState extends State<GameDetailsScreen> {
     );
   }
 
-  /// صفوف بطاقة المعلومات (تظهر فقط للحقول المعبأة).
+  /// صفوف بطاقة المعلومات (تظهر فقط للحقول المعبأة) + صفو الحجم بنمط Epic.
   List<Widget> _infoRows() {
     final List<MapEntry<String, String>> items = <MapEntry<String, String>>[];
     void add(String label, String value) {
@@ -644,31 +644,48 @@ class _GameDetailsScreenState extends State<GameDetailsScreen> {
       items.add(MapEntry<String, String>(label, value));
     }
 
-    add('المطوّر', widget.game.developer);
-    add('تاريخ الإصدار', _fmtDate(widget.game.releaseDate));
-    add('آخر تحديث', _fmtDate(widget.game.lastUpdated));
-    if (widget.game.download != null && widget.game.download!.version.isNotEmpty) {
-      add('الإصدار', widget.game.download!.version);
+    add('Developer', widget.game.developer);
+    add('Release Date', _fmtDate(widget.game.releaseDate));
+    // صفو الحجم بأسلوب Epic: Download Size + Install Size
+    if (widget.game.download != null && widget.game.download!.available) {
+      final int downloadSize = widget.game.download!.files.fold<int>(
+        0,
+        (int s, DownloadFile f) => s + f.size,
+      );
+      if (downloadSize > 0) {
+        add('Download Size', formatBytes(downloadSize));
+        add('Install Size', formatBytes(_estimatedInstallSize(downloadSize)));
+      }
     }
-    add('الحزمة', widget.game.packageName);
+    add('Last Updated', _fmtDate(widget.game.lastUpdated));
+    if (widget.game.download != null && widget.game.download!.version.isNotEmpty) {
+      add('Version', widget.game.download!.version);
+    }
+    add('Package', widget.game.packageName);
 
     return List<Widget>.generate(items.length, (int i) {
       return _infoRow(items[i].key, items[i].value, last: i == items.length - 1);
     });
   }
 
-  /// تنسيق تاريخ YYYY-MM-DD إلى صيغة عربية مقروءة (12 مايو 2024).
+  /// تقدير حجم ما بعد التثبيت: ملفات APK تُفك ضغطها فيمتد الحجم (≈1.8×)
+  /// وملفات OBB/Data تنسخ كما هي.
+  static int _estimatedInstallSize(int downloadSize) =>
+      (downloadSize * 1.8).round();
+
+  /// تنسيق تاريخ YYYY-MM-DD إلى صيغة مقروءة (May 12, 2024) — بأسلوب Epic.
   String _fmtDate(String iso) {
     if (iso.isEmpty) return '';
     final RegExpMatch? m =
         RegExp(r'^(\d{4})-(\d{2})-(\d{2})').firstMatch(iso);
     if (m == null) return iso;
     const List<String> months = <String>[
-      'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
-      'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر',
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December',
     ];
     final int mi = (int.tryParse(m.group(2) ?? '') ?? 1) - 1;
-    return '${int.tryParse(m.group(3) ?? '') ?? ''} ${mi >= 0 && mi < 12 ? months[mi] : ''} ${m.group(1)}';
+    return '${mi >= 0 && mi < 12 ? months[mi] : ''} '
+        '${int.tryParse(m.group(3) ?? '') ?? ''}, ${m.group(1)}';
   }
 }
 
@@ -694,10 +711,10 @@ class _WishCircleButton extends StatelessWidget {
               ..showSnackBar(
                 SnackBar(
                   content: Text(
-                    added ? 'أُضيفت إلى قائمة المفضلة' : 'أُزيلت من قائمة المفضلة',
+                    added ? 'In wishlist' : 'Removed from wishlist',
                   ),
                   action: SnackBarAction(
-                    label: added ? 'تراجع' : 'استعادة',
+                    label: added ? 'Undo' : 'Restore',
                     onPressed: () => WishlistController.instance.toggle(game),
                   ),
                 ),

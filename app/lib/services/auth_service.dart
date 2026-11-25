@@ -121,12 +121,12 @@ class AuthService extends ChangeNotifier {
     final bool ok = data['ok'] == true;
     if (!ok) {
       final int code = res.statusCode ?? 500;
-      String msg = (data['error'] as String?) ?? 'حدث خطأ غير متوقع، حاول مرة أخرى.';
+      String msg = (data['error'] as String?) ?? 'An unexpected error occurred. Please try again.';
       if (data['resend_after'] is int) {
         lastResendAfter = data['resend_after'] as int;
       }
       if (code >= 500) {
-        msg = 'تعذر الاتصال بخادم المصادقة حاليًا، حاول بعد قليل.';
+        msg = 'Auth server unreachable right now. Try again later.';
       }
       throw Exception(msg);
     }
@@ -135,7 +135,7 @@ class AuthService extends ChangeNotifier {
 
   /// رسالة تعذر الاتصال (بلا إنترنت / خادم متوقف)
   Exception _networkError(Object e) {
-    return Exception('تعذر الاتصال بالخادم، يرجى التحقق من اتصال الإنترنت والمحاولة مرة أخرى.');
+    return Exception('Cannot reach the server — check your internet connection and try again.');
   }
 
   // ---------- العمليات ----------
@@ -213,7 +213,7 @@ class AuthService extends ChangeNotifier {
       if (localMatch) {
         _currentUser = UserModel(
           uid: 'flux_${cleanDigits(normalized)}',
-          name: _currentUser?.name ?? 'لاعب FLUX',
+          name: _currentUser?.name ?? 'FLUX Player',
           phone: normalized,
         );
         await _persist();
@@ -227,7 +227,7 @@ class AuthService extends ChangeNotifier {
       if (localMatch) {
         _currentUser = UserModel(
           uid: 'flux_${cleanDigits(normalized)}',
-          name: _currentUser?.name ?? 'لاعب FLUX',
+          name: _currentUser?.name ?? 'FLUX Player',
           phone: normalized,
         );
         await _persist();
@@ -290,7 +290,7 @@ class AuthService extends ChangeNotifier {
   /// تغيير كلمة المرور للمستخدم المسجل حاليًا
   Future<void> changePassword(String newPassword) async {
     if (_currentUser == null) {
-      throw Exception('يجب تسجيل الدخول أولًا');
+      throw Exception('Sign in first');
     }
     final String phone = _currentUser!.phone;
 
@@ -334,7 +334,7 @@ class AuthService extends ChangeNotifier {
     _token = data['token'] as String?;
     _currentUser = UserModel(
       uid: (userMap['uid'] as String?) ?? 'flux_${cleanDigits(fallbackPhone)}',
-      name: (userMap['name'] as String?) ?? fallbackName ?? 'لاعب FLUX',
+      name: (userMap['name'] as String?) ?? fallbackName ?? 'FLUX Player',
       phone: (userMap['phone'] as String?) ?? fallbackPhone,
       createdAt: userMap['created_at'] is String && (userMap['created_at'] as String).isNotEmpty
           ? DateTime.tryParse(userMap['created_at'] as String)

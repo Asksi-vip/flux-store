@@ -457,16 +457,16 @@ class DownloadManager extends ChangeNotifier with WidgetsBindingObserver {
 
   void _bgStart(DownloadTask t) {
     try {
-      _bgChannel.invokeMethod('start', {'title': 'تحميل ${t.game.name}'});
+      _bgChannel.invokeMethod('start', {'title': 'Downloading ${t.game.name}'});
     } catch (_) {}
   }
 
   void _bgUpdate(DownloadTask t) {
     try {
       _bgChannel.invokeMethod('update', {
-        'title': 'تحميل ${t.game.name}',
+        'title': 'Downloading ${t.game.name}',
         'progress':
-            '${(t.progress * 100).toStringAsFixed(0)}% — ${formatBytes(t.speed)}/ث',
+            '${(t.progress * 100).toStringAsFixed(0)}% — ${formatBytes(t.speed)}/s',
       });
     } catch (_) {}
   }
@@ -699,7 +699,7 @@ class DownloadManager extends ChangeNotifier with WidgetsBindingObserver {
           try {
             _bgChannel.invokeMethod(
               'notifyReady',
-              <String, dynamic>{'title': '${t.game.name} جاهزة للتشغيل ✓'},
+              <String, dynamic>{'title': '${t.game.name} is ready to play ✓'},
             );
           } catch (_) {}
         }

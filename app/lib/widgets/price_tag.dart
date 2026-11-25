@@ -65,7 +65,7 @@ class GamePricePill extends StatelessWidget {
           ..showSnackBar(
             const SnackBar(
               content: Text(
-                'ملف APK غير موجود على المسار — أعد التحميل من التفاصيل',
+                'APK file not found — download again from the details page',
               ),
             ),
           );
@@ -78,7 +78,7 @@ class GamePricePill extends StatelessWidget {
         ..hideCurrentSnackBar()
         ..showSnackBar(
           SnackBar(
-              content: Text('بدأ تحميل ${game.name} — يكمل حتى لو انقطع النت')),
+              content: Text('Downloading ${game.name} — continues even offline')),
         );
       return;
     }
@@ -101,7 +101,7 @@ class GamePricePill extends StatelessWidget {
               ),
               const SizedBox(width: 5),
               Text(
-                taskNow?.installed == true ? 'تشغيل' : 'تثبيت',
+                taskNow?.installed == true ? 'Open' : 'Install',
                 style: TextStyle(
                   color: EpicColors.cyan,
                   fontSize: fontSize,

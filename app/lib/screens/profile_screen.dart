@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config.dart';
 import '../controllers/library_controller.dart';
@@ -26,6 +27,36 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   late Future<bool> _serverFuture = ApiService.instance.isServerOnline();
+  bool _autoUpdate = true;
+  bool _dataDownloads = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSettings();
+  }
+
+  /// تحميل تفضيلات APP SETTINGS من التخزين المحلي (مفاتيح Epic).
+  Future<void> _loadSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _autoUpdate = prefs.getBool('flux_auto_update') ?? true;
+      _dataDownloads = prefs.getBool('flux_data_downloads') ?? false;
+    });
+  }
+
+  Future<void> _setAutoUpdate(bool v) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('flux_auto_update', v);
+    setState(() => _autoUpdate = v);
+  }
+
+  /// تفضيل Data downloads — يقرأه زر التحميل قبل كل بدء/استئناف (حوار Epic).
+  Future<void> _setDataDownloads(bool v) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('flux_data_downloads', v);
+    setState(() => _dataDownloads = v);
+  }
 
   Future<void> _refreshServer() async {
     setState(() {
@@ -59,7 +90,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 children: [
                   Icon(Icons.lock_reset_rounded, color: EpicColors.cyan, size: 22),
                   SizedBox(width: 8),
-                  Text('تغيير كلمة المرور', style: TextStyle(color: EpicColors.textPrimary, fontSize: 17, fontWeight: FontWeight.bold)),
+                  Text('Change Password', style: TextStyle(color: EpicColors.textPrimary, fontSize: 17, fontWeight: FontWeight.bold)),
                 ],
               ),
               content: Column(
@@ -75,7 +106,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     obscureText: true,
                     style: const TextStyle(color: EpicColors.textPrimary, fontSize: 14),
                     decoration: InputDecoration(
-                      hintText: 'كلمة المرور الجديدة (6 خانات+)',
+                      hintText: 'New password (6+ characters)',
                       hintStyle: TextStyle(color: EpicColors.textSecondary.withOpacity(.6), fontSize: 12),
                       filled: true,
                       fillColor: EpicColors.background,
@@ -89,7 +120,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     obscureText: true,
                     style: const TextStyle(color: EpicColors.textPrimary, fontSize: 14),
                     decoration: InputDecoration(
-                      hintText: 'تأكيد كلمة المرور الجديدة',
+                      hintText: 'Confirm new password',
                       hintStyle: TextStyle(color: EpicColors.textSecondary.withOpacity(.6), fontSize: 12),
                       filled: true,
                       fillColor: EpicColors.background,
@@ -102,7 +133,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               actions: [
                 TextButton(
                   onPressed: () => Navigator.of(ctx).pop(),
-                  child: const Text('إلغاء', style: TextStyle(color: EpicColors.textSecondary)),
+                  child: const Text('Cancel', style: TextStyle(color: EpicColors.textSecondary)),
                 ),
                 ElevatedButton(
                   onPressed: saving
@@ -110,11 +141,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       : () async {
                           final String p = newPwdCtrl.text.trim();
                           if (p.length < 6) {
-                            setDialogState(() => err = 'يجب أن لا تقل كلمة المرور عن 6 خانات');
+                            setDialogState(() => err = 'Password must be at least 6 characters');
                             return;
                           }
                           if (p != confirmPwdCtrl.text.trim()) {
-                            setDialogState(() => err = 'كلمتا المرور غير متطابقتين');
+                            setDialogState(() => err = "Passwords don't match");
                             return;
                           }
 
@@ -129,7 +160,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               Navigator.of(ctx).pop();
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(
-                                  content: Text('تم تغيير كلمة المرور بنجاح ✓'),
+                                  content: Text('Password changed successfully'),
                                   backgroundColor: EpicColors.success,
                                 ),
                               );
@@ -147,7 +178,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                   child: saving
                       ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                      : const Text('حفظ', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                      : const Text('Save', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                 ),
               ],
             );
@@ -158,17 +189,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   void _showLogoutDialog() {
+    // حوار تأكيد الخروج بنص Epic الحرفي: Cancel / Sign Out
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: EpicColors.surface,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        title: const Text('تسجيل الخروج', style: TextStyle(color: EpicColors.textPrimary, fontSize: 17, fontWeight: FontWeight.bold)),
-        content: const Text('هل أنت متأكد من رغبتك في تسجيل الخروج من حسابك؟', style: TextStyle(color: EpicColors.textSecondary, fontSize: 13, height: 1.5)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        title: const Text(
+          'Are you sure you want to sign out?',
+          style: TextStyle(
+            color: EpicColors.textPrimary,
+            fontSize: 16.5,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('إلغاء', style: TextStyle(color: EpicColors.textSecondary)),
+            child: const Text('Cancel', style: TextStyle(color: EpicColors.textSecondary)),
           ),
           ElevatedButton(
             onPressed: () async {
@@ -177,9 +215,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: EpicColors.danger,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
             ),
-            child: const Text('خروج', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            child: const Text('Sign Out', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -265,7 +303,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 children: [
                                   Flexible(
                                     child: Text(
-                                      loggedIn ? user.name : 'لاعب ضيف',
+                                      loggedIn ? user.name : 'Guest',
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
                                       style: const TextStyle(
@@ -290,7 +328,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                           Icon(Icons.verified_rounded, color: EpicColors.success, size: 12),
                                           SizedBox(width: 3),
                                           Text(
-                                            'موثق',
+                                            'Verified',
                                             style: TextStyle(color: EpicColors.success, fontSize: 10, fontWeight: FontWeight.bold),
                                           ),
                                         ],
@@ -302,8 +340,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               const SizedBox(height: 4),
                               Text(
                                 loggedIn
-                                    ? (user.phone.isNotEmpty ? user.phone : 'مسجل عبر الهاتف')
-                                    : 'سجّل حسابك لحفظ ألعابك من أي جهاز',
+                                    ? (user.phone.isNotEmpty ? user.phone : 'Signed in with phone')
+                                    : 'Sign in to keep your games across devices',
                                 style: const TextStyle(
                                   color: EpicColors.textSecondary,
                                   fontSize: 12,
@@ -325,7 +363,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             child: OutlinedButton.icon(
                               onPressed: _showChangePasswordDialog,
                               icon: const Icon(Icons.lock_outline_rounded, size: 16, color: EpicColors.cyan),
-                              label: const Text('تغيير كلمة المرور', style: TextStyle(color: EpicColors.cyan, fontSize: 12, fontWeight: FontWeight.bold)),
+                              label: const Text('Change Password', style: TextStyle(color: EpicColors.cyan, fontSize: 12, fontWeight: FontWeight.bold)),
                               style: OutlinedButton.styleFrom(
                                 side: BorderSide(color: EpicColors.cyan.withOpacity(.4)),
                                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -337,7 +375,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           OutlinedButton.icon(
                             onPressed: _showLogoutDialog,
                             icon: const Icon(Icons.logout_rounded, size: 16, color: Colors.redAccent),
-                            label: const Text('خروج', style: TextStyle(color: Colors.redAccent, fontSize: 12, fontWeight: FontWeight.bold)),
+                            label: const Text('Sign Out', style: TextStyle(color: Colors.redAccent, fontSize: 12, fontWeight: FontWeight.bold)),
                             style: OutlinedButton.styleFrom(
                               side: BorderSide(color: Colors.redAccent.withOpacity(.4)),
                               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -350,7 +388,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ElevatedButton.icon(
                         onPressed: () => _openAuth(isLogin: true),
                         icon: const Icon(Icons.login_rounded, size: 18, color: Colors.white),
-                        label: const Text('تسجيل الدخول / إنشاء حساب', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+                        label: const Text('Sign In / Create Account', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: EpicColors.blue,
                           padding: const EdgeInsets.symmetric(vertical: 12),
@@ -367,7 +405,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
             // الإحصائيات الحقيقية
             const Text(
-              'إحصائياتي',
+              'My Stats',
               style: TextStyle(
                 color: EpicColors.textPrimary,
                 fontSize: 18,
@@ -376,7 +414,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
             const SizedBox(height: 4),
             const Text(
-              'أرقام محسوبة مباشرة من مكتبتك',
+              'Computed live from your library',
               style: TextStyle(color: EpicColors.textSecondary, fontSize: 12),
             ),
             const SizedBox(height: 14),
@@ -390,22 +428,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
               padding: EdgeInsets.zero,
               children: [
                 _statCard(
-                  'ألعابي',
+                  'Games',
                   '${games.length}',
                   Icons.video_library_rounded,
                 ),
                 _statCard(
-                  'قيمة المكتبة',
+                  'Library Value',
                   '\$${totalValue.toStringAsFixed(2)}',
                   Icons.account_balance_wallet_rounded,
                 ),
                 _statCard(
-                  'إجمالي التوفير',
+                  'Total Savings',
                   '\$${savings.toStringAsFixed(2)}',
                   Icons.local_offer_rounded,
                 ),
                 _statCard(
-                  'متوسط التقييم',
+                  'Avg. Rating',
                   avgRating.toStringAsFixed(1),
                   Icons.star_rounded,
                 ),
@@ -413,18 +451,66 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
             const SizedBox(height: 24),
 
-            // حالة الاتصال بالخادم
+            // قسم APP SETTINGS بأسلوب Epic: مفاتيح التحديث التلقائي وبيانات الجوال
             const Text(
-              'الاتصال والخادم',
+              'APP SETTINGS',
               style: TextStyle(
-                color: EpicColors.textPrimary,
-                fontSize: 18,
+                color: EpicColors.textSecondary,
+                fontSize: 12,
                 fontWeight: FontWeight.w800,
+                letterSpacing: 1.4,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              decoration: BoxDecoration(
+                color: EpicColors.surface,
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(color: EpicColors.border),
+              ),
+              child: Column(
+                children: [
+                  _settingsTile(
+                    icon: Icons.update_rounded,
+                    title: 'Auto update',
+                    subtitle: 'Allow automatic updates for app and games',
+                    value: _autoUpdate,
+                    onChanged: _setAutoUpdate,
+                    first: true,
+                  ),
+                  Container(
+                    height: 1,
+                    color: EpicColors.border.withOpacity(.6),
+                  ),
+                  _settingsTile(
+                    icon: Icons.cell_tower_rounded,
+                    title: 'Data downloads',
+                    subtitle:
+                        'Always allow app downloads over cellular data',
+                    value: _dataDownloads,
+                    onChanged: _setDataDownloads,
+                    first: false,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            _infoRow('App Version', '1.0.24'),
+            const SizedBox(height: 24),
+
+            // حالة الاتصال بالخادم (قسم ABOUT بأسلوب Epic)
+            const Text(
+              'ABOUT',
+              style: TextStyle(
+                color: EpicColors.textSecondary,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.4,
               ),
             ),
             const SizedBox(height: 4),
             const Text(
-              'حالة خادم الـ API ومعلومات الربط',
+              'Server status and connection details',
               style: TextStyle(color: EpicColors.textSecondary, fontSize: 12),
             ),
             const SizedBox(height: 14),
@@ -469,8 +555,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         Expanded(
                           child: Text(
                             snapshot.connectionState == ConnectionState.waiting
-                                ? 'جارٍ فحص الخادم...'
-                                : (online ? 'الخادم متصل ويعمل' : 'تعذر الوصول إلى الخادم'),
+                                ? 'Checking server…'
+                                : (online
+                                    ? 'Server is online'
+                                    : 'Could not reach the server'),
                             style: const TextStyle(
                               color: EpicColors.textPrimary,
                               fontSize: 14,
@@ -485,7 +573,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             color: EpicColors.textSecondary,
                             size: 20,
                           ),
-                          tooltip: 'إعادة الفحص',
+                          tooltip: 'Refresh',
                         ),
                       ],
                     ),
@@ -494,13 +582,64 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
             ),
             const SizedBox(height: 12),
-            _infoRow('نظام المصادقة', 'مصادقة ذاتية OTP عبر خادم الخاص'),
-            _infoRow('عنوان الخادم', AppConfig.baseUrl),
-            _infoRow('نقطة الألعاب', '${AppConfig.apiBaseUrl}/games/'),
-            _infoRow('إصدار التطبيق', '1.0.18'),
+            _infoRow('Authentication', 'Self-hosted OTP via own server'),
+            _infoRow('Server', AppConfig.baseUrl),
+            _infoRow('Games Endpoint', '${AppConfig.apiBaseUrl}/games/'),
           ],
         );
       },
+    );
+  }
+
+  /// صف إعداد بأسلوب Epic: أيقونة + عنوان + وصف + مفتاح تبديل.
+  Widget _settingsTile({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+    required bool first,
+  }) {
+    return Padding(
+      padding: EdgeInsets.only(top: first ? 0 : 0),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        child: Row(
+          children: [
+            Icon(icon, color: EpicColors.cyan, size: 20),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      color: EpicColors.textPrimary,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(
+                      color: EpicColors.textSecondary,
+                      fontSize: 11.5,
+                      height: 1.4,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Switch(
+              value: value,
+              onChanged: onChanged,
+              activeColor: EpicColors.blue,
+            ),
+          ],
+        ),
+      ),
     );
   }
 

@@ -198,8 +198,8 @@ class _WishHeart extends StatelessWidget {
                 SnackBar(
                   content: Text(
                     added
-                        ? 'أُضيفت "${game.name}" إلى قائمة المفضلة'
-                        : 'أُزيلت "${game.name}" من قائمة المفضلة',
+                        ? 'In wishlist'
+                        : 'Removed from wishlist',
                   ),
                 ),
               );

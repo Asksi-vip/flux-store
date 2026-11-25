@@ -13,8 +13,8 @@ import '../widgets/status_views.dart';
 
 /// شاشة قائمة المفضلة (Wishlist) بأسلوب Epic:
 /// صف أفقي لكل لعبة (غلاف عمودي مصغر + الاسم + الفئة + السعر مع شارة الخصم)
-/// مع إزالة عبر السحب أو الزر وزر تراجع، مثل صفوف المكتبة.
-class WishlistScreen extends StatelessWidget {
+/// مع إزالة عبر السحب أو الزر وزر تراجع + ترتيب (A-Z / Date Added / Price).
+class WishlistScreen extends StatefulWidget {
   const WishlistScreen({
     super.key,
     required this.libraryController,
@@ -24,10 +24,99 @@ class WishlistScreen extends StatelessWidget {
   final LibraryController libraryController;
   final VoidCallback onBrowse;
 
+  @override
+  State<WishlistScreen> createState() => _WishlistScreenState();
+}
+
+enum _WishSort { dateAdded, aToZ, priceLow, priceHigh }
+
+class _WishlistScreenState extends State<WishlistScreen> {
+  _WishSort _sort = _WishSort.dateAdded;
+
+  /// ترتيب القائمة حسب الخيار المختار (Date Added = ترتيب الإضافة الأصلي).
+  List<Game> _sorted(List<Game> games) {
+    switch (_sort) {
+      case _WishSort.dateAdded:
+        return games;
+      case _WishSort.aToZ:
+        return [...games]
+          ..sort((Game a, Game b) =>
+              a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      case _WishSort.priceLow:
+        return [...games]
+          ..sort((Game a, Game b) =>
+              a.finalPrice.compareTo(b.finalPrice));
+      case _WishSort.priceHigh:
+        return [...games]
+          ..sort((Game a, Game b) =>
+              b.finalPrice.compareTo(a.finalPrice));
+    }
+  }
+
+  /// ورقة الترتيب بأسلوب Epic (خيارات wishlist_sort الحرفية).
+  void _showSortSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: EpicColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+      ),
+      builder: (BuildContext ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.fromLTRB(20, 18, 20, 6),
+                child: Text(
+                  'Sort',
+                  style: TextStyle(
+                    color: EpicColors.textPrimary,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              for (final (_WishSort s, String label) in <(_WishSort, String)>[
+                (_WishSort.aToZ, 'A-Z'),
+                (_WishSort.dateAdded, 'Date Added'),
+                (_WishSort.priceLow, 'Price: Low to High'),
+                (_WishSort.priceHigh, 'Price: High to Low'),
+              ])
+                ListTile(
+                  leading: Icon(
+                    _sort == s
+                        ? Icons.radio_button_checked_rounded
+                        : Icons.radio_button_off_rounded,
+                    color:
+                        _sort == s ? EpicColors.blue : EpicColors.textSecondary,
+                    size: 20,
+                  ),
+                  title: Text(
+                    label,
+                    style: const TextStyle(
+                      color: EpicColors.textPrimary,
+                      fontSize: 14,
+                    ),
+                  ),
+                  onTap: () {
+                    setState(() => _sort = s);
+                    Navigator.of(ctx).pop();
+                  },
+                ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   void _openGame(BuildContext context, Game game) {
     Navigator.of(context).push(
       epicRoute(
-        GameDetailsScreen(game: game, controller: libraryController),
+        GameDetailsScreen(game: game, controller: widget.libraryController),
       ),
     );
   }
@@ -38,7 +127,7 @@ class WishlistScreen extends StatelessWidget {
     return ListenableBuilder(
       listenable: wishlist,
       builder: (context, _) {
-        final List<Game> games = wishlist.games;
+        final List<Game> games = _sorted(wishlist.games);
         if (games.isEmpty) {
           return ListView(
             physics: const AlwaysScrollableScrollPhysics(),
@@ -46,11 +135,11 @@ class WishlistScreen extends StatelessWidget {
               const SizedBox(height: 110),
               EmptyView(
                 icon: Icons.favorite_outline_rounded,
-                title: 'قائمة المفضلة فارغة',
+                title: 'Nothing to see here…',
                 message:
-                    'اضغط على القلب في أي لعبة لتحفظها هنا وتتابع سعرها وخصوماتها',
-                actionLabel: 'تصفح المتجر',
-                onAction: onBrowse,
+                    'Select the heart on an item to add it here.',
+                actionLabel: 'Browse store',
+                onAction: widget.onBrowse,
               ),
             ],
           );
@@ -58,17 +147,29 @@ class WishlistScreen extends StatelessWidget {
         return ListView(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
           children: [
-            const Text(
-              'قائمة المفضلة',
-              style: TextStyle(
-                color: EpicColors.textPrimary,
-                fontSize: 22,
-                fontWeight: FontWeight.w800,
-              ),
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Wishlist',
+                    style: TextStyle(
+                      color: EpicColors.textPrimary,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: _showSortSheet,
+                  icon: const Icon(Icons.sort_rounded, size: 22),
+                  color: EpicColors.textPrimary,
+                  tooltip: 'Sort',
+                ),
+              ],
             ),
             const SizedBox(height: 4),
             Text(
-              '${games.length} لعبة محفوظة — تابع أسعارها وخصوماتها من هنا',
+              '${games.length} saved — track prices and discounts here',
               style: const TextStyle(
                 color: EpicColors.textSecondary,
                 fontSize: 12,
@@ -103,9 +204,9 @@ class _WishRow extends StatelessWidget {
       ..hideCurrentSnackBar()
       ..showSnackBar(
         SnackBar(
-          content: const Text('تمت الإزالة من قائمة المفضلة'),
+          content: const Text('Removed from wishlist'),
           action: SnackBarAction(
-            label: 'تراجع',
+            label: 'Undo',
             onPressed: () => WishlistController.instance.add(game),
           ),
         ),
@@ -200,7 +301,7 @@ class _WishRow extends StatelessWidget {
                   color: EpicColors.cyan,
                   size: 22,
                 ),
-                tooltip: 'إزالة من المفضلة',
+                tooltip: 'Remove from wishlist',
               ),
             ],
           ),

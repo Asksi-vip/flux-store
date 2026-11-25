@@ -1,21 +1,22 @@
 import 'package:flutter/material.dart';
 
-/// ألوان الهوية البصرية المستوحاة من متجر Epic Games Store.
+/// ألوان الهوية البصرية — مستخرجة من تحليل تطبيق Epic Games Store الرسمي
+/// (app_background=#17242D، أخضر التثبيت #1D873B، أحمر الخطأ #D93025،
+/// برتقالي التخفيضات #FF7043/#FF5722) بأسلوب clean-room لتطبيق Flux.
 class EpicColors {
   EpicColors._();
 
-  /// الخلفية الرئيسية الداكنة (#101014 — لون Epic الأساسي)
-  static const Color background = Color(0xFF101014);
+  /// الخلفية الرئيسية — الكحلي الداكن المزرق الحقيقي لخلفية تطبيق Epic
+  static const Color background = Color(0xFF17242D);
 
-  /// لون الأسطح: البطاقات والشرائط والأشرطة العلوية
-  static const Color surface = Color(0xFF18181C);
+  /// لون الأسطح: البطاقات والشرائط والأشرطة العلوية (أفتح درجة من الخلفية)
+  static const Color surface = Color(0xFF1C2B35);
 
   /// سطح مرفوع: الحقول والعناصر التفاعلية
-  static const Color elevated = Color(0xFF202024);
-  static const Color surfaceRaised = Color(0xFF202024);
+  static const Color elevated = Color(0xFF253642);
 
   /// لون الحدود الرمادية الرقيقة
-  static const Color border = Color(0xFF2A2A2A);
+  static const Color border = Color(0xFF2E404D);
 
   /// الأزرق الرسمي لأزرار Epic
   static const Color blue = Color(0xFF0074E4);
@@ -27,16 +28,22 @@ class EpicColors {
   static const Color textPrimary = Color(0xFFFFFFFF);
 
   /// النص الثانوي الرمادي (أسلوب Epic للنصوص الجانبية)
-  static const Color textSecondary = Color(0xFFB8B8C1);
+  static const Color textSecondary = Color(0xFFA9B2BA);
 
   /// لون النص فوق الشارات
   static const Color textOnBadge = Color(0xFFFFFFFF);
 
-  /// أخضر النجاح (عنصر موجود في المكتبة / الخادم متصل)
-  static const Color success = Color(0xFF2FBF71);
+  /// برتقالي شارة التخفيض (مستخرج من ألوان Epic)
+  static const Color saleOrange = Color(0xFFFF7043);
 
-  /// أحمر الخطر (حذف من المكتبة / الخادم متوقف)
-  static const Color danger = Color(0xFFE0455A);
+  /// البرتقالي العميق للخصومات الكبيرة
+  static const Color saleDeepOrange = Color(0xFFFF5722);
+
+  /// أخضر النجاح/التثبيت (اللون الأخضر الحقيقي من موارد Epic)
+  static const Color success = Color(0xFF1D873B);
+
+  /// أحمر الخطر (اللون الأحمر الحقيقي من موارد Epic)
+  static const Color danger = Color(0xFFD93025);
 }
 
 /// ثيم التطبيق الكامل بأسلوب Epic Games.
@@ -51,7 +58,7 @@ ThemeData buildEpicTheme() {
       error: EpicColors.danger,
     ),
     appBarTheme: const AppBarTheme(
-      backgroundColor: EpicColors.surface,
+      backgroundColor: EpicColors.background,
       surfaceTintColor: Colors.transparent,
       elevation: 0,
       centerTitle: false,

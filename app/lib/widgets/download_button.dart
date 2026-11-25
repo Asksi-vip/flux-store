@@ -1,13 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/game.dart';
 import '../services/download_manager.dart';
 import '../theme/app_theme.dart';
 import 'epic_button.dart';
 
-/// منطقة زر التحميل في صفحة التفاصيل — تتغير حالتها مباشرة مثل Epic Games:
-/// تحميل مجاني ← جارٍ (تقدم + سرعة) ← بانتظار الشبكة (استكمال تلقائي) ← متوقف ← مكتمل.
+/// منطقة زر التحميل في صفحة التفاصيل — آلة حالة التثبيت بنصوص Epic الحرفية:
+/// Get/Install ← Downloading… % ← Download Paused ← paused waiting for Wi-Fi
+/// ← Download Complete. Ready to Install. ← Installing… ← Open.
 class DownloadButton extends StatelessWidget {
   const DownloadButton({super.key, required this.game, this.onClaim});
 
@@ -16,6 +18,83 @@ class DownloadButton extends StatelessWidget {
   /// تُستدعى عند بدء التحميل — لإضافة اللعبة للمكتبة (مثل "استحواذ" Epic).
   final VoidCallback? onClaim;
 
+  /// مفتاح تفضيل "Data downloads" — ON = لا نسأل، OFF = نسأل قبل كل بدء/استئناف.
+  static const String _dataDownloadsKey = 'flux_data_downloads';
+
+  /// حوار تأكيد التحميل عبر بيانات الجوال بنصوص Epic الحرفية.
+  /// يظهر فقط عندما يكون إعداد Data downloads مطفأً.
+  Future<bool> _confirmCellular(BuildContext context,
+      {required bool resuming}) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool(_dataDownloadsKey) ?? false) {
+      return true; // الإعداد مفعّل — حمّل دائمًا بلا سؤال
+    }
+    if (!context.mounted) return false;
+    final bool? ok = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext ctx) {
+        return AlertDialog(
+          backgroundColor: EpicColors.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+          title: Text(
+            resuming
+                ? 'Continue download using mobile data?'
+                : 'Download using mobile data?',
+            style: const TextStyle(
+              color: EpicColors.textPrimary,
+              fontSize: 17,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          content: const Text(
+            'You can change this anytime in Settings → Data downloads.',
+            style: TextStyle(
+              color: EpicColors.textSecondary,
+              fontSize: 13.5,
+              height: 1.5,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text(
+                'Cancel',
+                style: TextStyle(
+                  color: EpicColors.textSecondary,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: EpicColors.blue,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text(
+                'Continue',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+    return ok ?? false;
+  }
+
+  Future<void> _start(BuildContext context) async {
+    final bool ok = await _confirmCellular(context, resuming: false);
+    if (!ok) return;
+    DownloadManager.instance.start(game);
+    onClaim?.call();
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -23,32 +102,35 @@ class DownloadButton extends StatelessWidget {
       builder: (context, _) {
         final DownloadTask? task = DownloadManager.instance.taskFor(game.id);
         if (task == null) {
+          // الحالة الابتدائية: Get للألعاب المجانية وInstall للمدفوعة (نصوص Epic)
           return EpicButton(
-            label: 'تثبيت مباشر',
+            label: game.isFree ? 'Get' : 'Install',
             icon: Icons.download_rounded,
-            onPressed: () {
-              DownloadManager.instance.start(game);
-              onClaim?.call();
-            },
+            onPressed: () => _start(context),
           );
         }
         switch (task.state) {
           case DownloadTaskState.downloading:
             return Column(
               children: [
+                _statusHeader(
+                  'Downloading… ${(task.progress * 100).toStringAsFixed(0)}%',
+                  EpicColors.blue,
+                ),
+                const SizedBox(height: 8),
                 _progressBar(task, EpicColors.blue),
                 const SizedBox(height: 10),
                 Row(
                   children: [
                     _iconAction(
                       Icons.pause_rounded,
-                      'إيقاف مؤقت',
+                      'Stop Download',
                       () => DownloadManager.instance.pause(game.id),
                     ),
                     const SizedBox(width: 10),
                     _iconAction(
                       Icons.delete_outline_rounded,
-                      'إلغاء التحميل',
+                      'Cancel install',
                       () => DownloadManager.instance.remove(game.id),
                       danger: true,
                     ),
@@ -59,18 +141,26 @@ class DownloadButton extends StatelessWidget {
           case DownloadTaskState.paused:
             return Column(
               children: [
+                _statusHeader('Download Paused', EpicColors.textSecondary),
+                const SizedBox(height: 8),
                 _progressBar(task, EpicColors.textSecondary),
                 const SizedBox(height: 12),
                 EpicButton(
-                  label: 'متابعة التحميل',
+                  label: 'Resume Download',
                   icon: Icons.play_arrow_rounded,
-                  onPressed: () => DownloadManager.instance.resume(game.id),
+                  onPressed: () async {
+                    final bool ok =
+                        await _confirmCellular(context, resuming: true);
+                    if (ok) {
+                      DownloadManager.instance.resume(game.id);
+                    }
+                  },
                 ),
                 const SizedBox(height: 8),
                 TextButton(
                   onPressed: () => DownloadManager.instance.remove(game.id),
                   child: const Text(
-                    'إلغاء وحذف الملفات',
+                    'Cancel install',
                     style: TextStyle(
                       color: EpicColors.danger,
                       fontSize: 12.5,
@@ -96,13 +186,13 @@ class DownloadButton extends StatelessWidget {
                       const Icon(Icons.wifi_off_rounded,
                           color: Colors.orange, size: 20),
                       const SizedBox(width: 10),
-                      Expanded(
+                      const Expanded(
                         child: Text(
-                          'انقطع الاتصال — سيستكمل التحميل تلقائيًا من نفس النقطة عند عودة الشبكة',
+                          'Download paused waiting for Wi-Fi.',
                           style: TextStyle(
-                            color: Colors.orange.shade200,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
+                            color: Colors.orange,
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w700,
                             height: 1.5,
                           ),
                         ),
@@ -117,13 +207,13 @@ class DownloadButton extends StatelessWidget {
                   children: [
                     _iconAction(
                       Icons.pause_rounded,
-                      'إيقاف مؤقت',
+                      'Stop Download',
                       () => DownloadManager.instance.pause(game.id),
                     ),
                     const SizedBox(width: 10),
                     _iconAction(
                       Icons.delete_outline_rounded,
-                      'إلغاء التحميل',
+                      'Cancel install',
                       () => DownloadManager.instance.remove(game.id),
                       danger: true,
                     ),
@@ -151,10 +241,10 @@ class DownloadButton extends StatelessWidget {
                       Expanded(
                         child: Text(
                           task.moving
-                              ? 'جارٍ نقل ملفات اللعبة إلى مكانها تلقائيًا…'
+                              ? 'Installing…'
                               : task.installed
-                                  ? 'اللعبة مثبتة على جهازك'
-                                  : 'تم تحميل اللعبة بنجاح',
+                                  ? 'Installed on this device'
+                                  : 'Download Complete. Ready to Install.',
                           style: const TextStyle(
                             color: EpicColors.success,
                             fontSize: 14,
@@ -175,7 +265,7 @@ class DownloadButton extends StatelessWidget {
                 const SizedBox(height: 12),
                 if (task.installed)
                   EpicButton(
-                    label: 'تشغيل اللعبة',
+                    label: 'Open',
                     icon: Icons.play_arrow_rounded,
                     variant: EpicButtonVariant.success,
                     onPressed: () async {
@@ -187,7 +277,7 @@ class DownloadButton extends StatelessWidget {
                           ..showSnackBar(
                             const SnackBar(
                               content: Text(
-                                'افتح اللعبة من أيقونتها في مشغّل النظام',
+                                'Open the game from its icon on your home screen',
                               ),
                             ),
                           );
@@ -196,23 +286,27 @@ class DownloadButton extends StatelessWidget {
                   )
                 else
                   EpicButton(
-                    label: 'تثبيت اللعبة',
-                    icon: Icons.install_mobile_rounded,
-                    onPressed: () async {
-                      final bool ok =
-                          await DownloadManager.instance.openInstaller(game.id);
-                      if (!ok && context.mounted) {
-                        ScaffoldMessenger.of(context)
-                          ..hideCurrentSnackBar()
-                          ..showSnackBar(
-                            const SnackBar(
-                              content: Text(
-                                'ملف APK غير موجود على المسار — أعد التحميل ثم حاول مجددًا',
-                              ),
-                            ),
-                          );
-                      }
-                    },
+                    label: task.moving ? 'Installing…' : 'Install',
+                    icon: task.moving
+                        ? Icons.hourglass_top_rounded
+                        : Icons.install_mobile_rounded,
+                    onPressed: task.moving
+                        ? null
+                        : () async {
+                            final bool ok = await DownloadManager.instance
+                                .openInstaller(game.id);
+                            if (!ok && context.mounted) {
+                              ScaffoldMessenger.of(context)
+                                ..hideCurrentSnackBar()
+                                ..showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                      'APK file not found — download again and retry',
+                                    ),
+                                  ),
+                                );
+                            }
+                          },
                   ),
                 const SizedBox(height: 10),
                 ..._filesRows(context, task),
@@ -220,7 +314,7 @@ class DownloadButton extends StatelessWidget {
                 TextButton(
                   onPressed: () => DownloadManager.instance.remove(game.id),
                   child: const Text(
-                    'إزالة من قائمة التنزيلات',
+                    'Remove from Downloads',
                     style: TextStyle(
                       color: EpicColors.textSecondary,
                       fontSize: 12.5,
@@ -236,6 +330,30 @@ class DownloadButton extends StatelessWidget {
   }
 
   // ---------- عناصر مساعدة ----------
+
+  /// سطر حالة علوي بنص Epic (Downloading… %، Download Paused…).
+  Widget _statusHeader(String text, Color color) {
+    return Row(
+      children: [
+        Icon(
+          text.startsWith('Downloading')
+              ? Icons.downloading_rounded
+              : Icons.pause_circle_outline_rounded,
+          size: 18,
+          color: color,
+        ),
+        const SizedBox(width: 8),
+        Text(
+          text,
+          style: TextStyle(
+            color: color,
+            fontSize: 13.5,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ],
+    );
+  }
 
   Widget _progressBar(DownloadTask task, Color color) {
     return Column(
@@ -253,7 +371,7 @@ class DownloadButton extends StatelessWidget {
         Row(
           children: [
             Text(
-              '${formatBytes(task.downloadedBytes)} من ${formatBytes(task.totalBytes)}',
+              '${formatBytes(task.downloadedBytes)} of ${formatBytes(task.totalBytes)}',
               style: const TextStyle(
                 color: EpicColors.textSecondary,
                 fontSize: 11.5,
@@ -263,7 +381,7 @@ class DownloadButton extends StatelessWidget {
             const Spacer(),
             if (task.state == DownloadTaskState.downloading)
               Text(
-                '${formatBytes(task.speed)}/ث',
+                '${formatBytes(task.speed)}/s',
                 style: const TextStyle(
                   color: EpicColors.cyan,
                   fontSize: 11.5,
@@ -340,7 +458,7 @@ class DownloadButton extends StatelessWidget {
             if (savedPath.isNotEmpty) ...[
               const SizedBox(height: 4),
               Text(
-                'حُفظ في: $savedPath',
+                'Saved to: $savedPath',
                 style: const TextStyle(
                   color: EpicColors.textSecondary,
                   fontSize: 10.5,
@@ -352,8 +470,8 @@ class DownloadButton extends StatelessWidget {
               const SizedBox(height: 4),
               Text(
                 task.installed
-                    ? 'نُقل تلقائيًا إلى: $target'
-                    : 'سينُقل تلقائيًا بعد التثبيت إلى: $target',
+                    ? 'Moved to: $target'
+                    : 'Will be moved after install to: $target',
                 style: const TextStyle(
                   color: EpicColors.cyan,
                   fontSize: 10.5,
@@ -380,7 +498,7 @@ class DownloadButton extends StatelessWidget {
         ScaffoldMessenger.of(context)
           ..hideCurrentSnackBar()
           ..showSnackBar(
-            const SnackBar(content: Text('تم نسخ المسار إلى الحافظة')),
+            const SnackBar(content: Text('Path copied to clipboard')),
           );
       },
       child: const Icon(

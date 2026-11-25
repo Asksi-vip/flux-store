@@ -78,7 +78,7 @@ class ErrorView extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             const Text(
-              'فشل الاتصال بالإنترنت',
+              'Something Went Wrong',
               style: TextStyle(
                 color: EpicColors.textPrimary,
                 fontSize: 17,
@@ -89,7 +89,7 @@ class ErrorView extends StatelessWidget {
             SizedBox(
               width: 180,
               child: EpicButton(
-                label: 'إعادة المحاولة',
+                label: 'Retry',
                 variant: EpicButtonVariant.secondary,
                 icon: Icons.refresh_rounded,
                 onPressed: onRetry,

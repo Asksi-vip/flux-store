@@ -141,7 +141,7 @@ class Game {
 
   /// نص السعر النهائي الجاهز للعرض (مجاني / 29.99$).
   String get finalPriceLabel =>
-      isFree ? 'مجاني' : '\$${_fmt(finalPrice)}';
+      isFree ? 'Free' : '\$${_fmt(finalPrice)}';
 
   /// نص السعر الأصلي قبل الخصم.
   String get priceLabel => '\$${_fmt(price)}';

@@ -33,7 +33,7 @@ class FluxApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flux — متجر الألعاب',
+      title: 'Flux Games Store',
       debugShowCheckedModeBanner: false,
       theme: buildEpicTheme(),
       // واجهة عربية من اليمين إلى اليسار في كامل التطبيق

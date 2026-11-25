@@ -37,23 +37,23 @@ class _AuthScreenState extends State<AuthScreen> {
   String? _errorMessage;
 
   static const List<Map<String, String>> _countries = [
-    {'name': 'العراق', 'code': '+964', 'flag': '🇮🇶'},
-    {'name': 'السعودية', 'code': '+966', 'flag': '🇸🇦'},
-    {'name': 'مصر', 'code': '+20', 'flag': '🇪🇬'},
-    {'name': 'الإمارات', 'code': '+971', 'flag': '🇦🇪'},
-    {'name': 'الكويت', 'code': '+965', 'flag': '🇰🇼'},
-    {'name': 'الأردن', 'code': '+962', 'flag': '🇯🇴'},
-    {'name': 'عُمان', 'code': '+968', 'flag': '🇴🇲'},
-    {'name': 'قطر', 'code': '+974', 'flag': '🇶🇦'},
-    {'name': 'البحرين', 'code': '+973', 'flag': '🇧🇭'},
-    {'name': 'اليمن', 'code': '+967', 'flag': '🇾🇪'},
-    {'name': 'سوريا', 'code': '+963', 'flag': '🇸🇾'},
-    {'name': 'لبنان', 'code': '+961', 'flag': '🇱🇧'},
-    {'name': 'الجزائر', 'code': '+213', 'flag': '🇩🇿'},
-    {'name': 'المغرب', 'code': '+212', 'flag': '🇲🇦'},
-    {'name': 'تونس', 'code': '+216', 'flag': '🇹🇳'},
-    {'name': 'ليبيا', 'code': '+218', 'flag': '🇱🇾'},
-    {'name': 'السودان', 'code': '+249', 'flag': '🇸🇩'},
+    {'name': 'Iraq', 'code': '+964', 'flag': '🇮🇶'},
+    {'name': 'Saudi Arabia', 'code': '+966', 'flag': '🇸🇦'},
+    {'name': 'Egypt', 'code': '+20', 'flag': '🇪🇬'},
+    {'name': 'UAE', 'code': '+971', 'flag': '🇦🇪'},
+    {'name': 'Kuwait', 'code': '+965', 'flag': '🇰🇼'},
+    {'name': 'Jordan', 'code': '+962', 'flag': '🇯🇴'},
+    {'name': 'Oman', 'code': '+968', 'flag': '🇴🇲'},
+    {'name': 'Qatar', 'code': '+974', 'flag': '🇶🇦'},
+    {'name': 'Bahrain', 'code': '+973', 'flag': '🇧🇭'},
+    {'name': 'Yemen', 'code': '+967', 'flag': '🇾🇪'},
+    {'name': 'Syria', 'code': '+963', 'flag': '🇸🇾'},
+    {'name': 'Lebanon', 'code': '+961', 'flag': '🇱🇧'},
+    {'name': 'Algeria', 'code': '+213', 'flag': '🇩🇿'},
+    {'name': 'Morocco', 'code': '+212', 'flag': '🇲🇦'},
+    {'name': 'Tunisia', 'code': '+216', 'flag': '🇹🇳'},
+    {'name': 'Libya', 'code': '+218', 'flag': '🇱🇾'},
+    {'name': 'Sudan', 'code': '+249', 'flag': '🇸🇩'},
   ];
 
   @override
@@ -77,11 +77,11 @@ class _AuthScreenState extends State<AuthScreen> {
     final String password = _passwordController.text.trim();
 
     if (phone.isEmpty) {
-      setState(() => _errorMessage = 'يرجى إدخال رقم الهاتف');
+      setState(() => _errorMessage = 'Please enter your phone number');
       return;
     }
     if (password.isEmpty) {
-      setState(() => _errorMessage = 'يرجى إدخال كلمة المرور');
+      setState(() => _errorMessage = 'Please enter your password');
       return;
     }
 
@@ -107,15 +107,15 @@ class _AuthScreenState extends State<AuthScreen> {
       final String confirm = _confirmPasswordController.text.trim();
 
       if (name.isEmpty) {
-        setState(() => _errorMessage = 'يرجى إدخال اسم اللاعب');
+        setState(() => _errorMessage = 'Please enter a player name');
         return;
       }
       if (password.length < 6) {
-        setState(() => _errorMessage = 'يجب أن تتكون كلمة المرور من 6 خانات على الأقل');
+        setState(() => _errorMessage = 'Password must be at least 6 characters');
         return;
       }
       if (password != confirm) {
-        setState(() => _errorMessage = 'كلمتا المرور غير متطابقتين');
+        setState(() => _errorMessage = "Passwords don't match");
         return;
       }
 
@@ -133,7 +133,7 @@ class _AuthScreenState extends State<AuthScreen> {
         setState(() => _isLoading = false);
         _showOtpSheet(
           phone: phone,
-          title: 'التحقق لإنشاء الحساب',
+          title: 'Verify to create account',
           onVerify: (code) async {
             await AuthService.instance.registerWithPhoneAndOtp(
               name: name,
@@ -164,7 +164,7 @@ class _AuthScreenState extends State<AuthScreen> {
     setState(() => _errorMessage = null);
     final String phone = _phoneController.text.trim();
     if (phone.isEmpty) {
-      setState(() => _errorMessage = 'يرجى إدخال رقم الهاتف أولاً');
+      setState(() => _errorMessage = 'Enter your phone number first');
       return;
     }
 
@@ -176,7 +176,7 @@ class _AuthScreenState extends State<AuthScreen> {
         setState(() => _isLoading = false);
         _showOtpSheet(
           phone: _fullPhone,
-          title: 'تسجيل الدخول السريع',
+          title: 'Quick Sign In',
           onVerify: (code) async {
             await AuthService.instance.loginWithOtp(
               phone: _fullPhone,
@@ -241,14 +241,14 @@ class _AuthScreenState extends State<AuthScreen> {
                       ),
                       const SizedBox(width: 12),
                       const Text(
-                        'إعادة تعيين كلمة المرور',
+                        'Reset Password',
                         style: TextStyle(color: EpicColors.textPrimary, fontSize: 18, fontWeight: FontWeight.w800),
                       ),
                     ],
                   ),
                   const SizedBox(height: 12),
                   const Text(
-                    'أدخل رقم هاتفك المسجل وسنرسل لك رمز تحقق (OTP) لتعيين كلمة مرور جديدة.',
+                    'Enter your registered phone and we will send a one-time code (OTP) to set a new password.',
                     style: TextStyle(color: EpicColors.textSecondary, fontSize: 13, height: 1.5),
                   ),
                   const SizedBox(height: 16),
@@ -288,7 +288,7 @@ class _AuthScreenState extends State<AuthScreen> {
                         : () {
                             final String rawP = resetPhoneCtrl.text.trim();
                             if (rawP.isEmpty) {
-                              setModalState(() => errText = 'يرجى إدخال رقم الهاتف');
+                              setModalState(() => errText = 'Please enter your phone number');
                               return;
                             }
                             final String fullP = AuthService.normalizePhone(rawP, countryCode: resetCountry);
@@ -318,7 +318,7 @@ class _AuthScreenState extends State<AuthScreen> {
                     ),
                     child: sending
                         ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                        : const Text('إرسال رمز التحقق (OTP)', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+                        : const Text('Send code (OTP)', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
                   ),
                 ],
               ),
@@ -363,7 +363,7 @@ class _AuthScreenState extends State<AuthScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Text(
-                      'أدخل الرمز المرسل إلى $phone',
+                      'Enter the code sent to $phone',
                       style: const TextStyle(color: EpicColors.textPrimary, fontSize: 16, fontWeight: FontWeight.w800),
                     ),
                     const SizedBox(height: 14),
@@ -376,7 +376,7 @@ class _AuthScreenState extends State<AuthScreen> {
                           border: Border.all(color: EpicColors.cyan.withOpacity(.4)),
                         ),
                         child: Text(
-                          'وضع التجربة (بوابة الرسائل غير مفعلة) — رمز التحقق: $devCode',
+                          'Test mode (SMS gateway disabled) — code: $devCode',
                           style: const TextStyle(color: EpicColors.cyan, fontSize: 12, fontWeight: FontWeight.w700),
                           textAlign: TextAlign.center,
                         ),
@@ -393,14 +393,14 @@ class _AuthScreenState extends State<AuthScreen> {
                     const SizedBox(height: 18),
                     _inputBox(
                       controller: newPwdCtrl,
-                      hint: 'كلمة المرور الجديدة',
+                      hint: 'New password',
                       isPassword: true,
                       icon: Icons.lock_outline_rounded,
                     ),
                     const SizedBox(height: 12),
                     _inputBox(
                       controller: confirmNewPwdCtrl,
-                      hint: 'تأكيد كلمة المرور الجديدة',
+                      hint: 'Confirm new password',
                       isPassword: true,
                       icon: Icons.lock_reset_rounded,
                     ),
@@ -410,16 +410,16 @@ class _AuthScreenState extends State<AuthScreen> {
                           ? null
                           : () async {
                               if (otpCode.length < 6) {
-                                setSheetState(() => err = 'يرجى إدخال رمز التحقق المكون من 6 أرقام');
+                                setSheetState(() => err = 'Enter the 6-digit code');
                                 return;
                               }
                               final String np = newPwdCtrl.text.trim();
                               if (np.length < 6) {
-                                setSheetState(() => err = 'كلمة المرور يجب أن لا تقل عن 6 أحرف');
+                                setSheetState(() => err = 'Password must be at least 6 characters');
                                 return;
                               }
                               if (np != confirmNewPwdCtrl.text.trim()) {
-                                setSheetState(() => err = 'كلمتا المرور غير متطابقتين');
+                                setSheetState(() => err = "Passwords don't match");
                                 return;
                               }
 
@@ -440,7 +440,7 @@ class _AuthScreenState extends State<AuthScreen> {
                                   Navigator.of(context).pop(true);
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     const SnackBar(
-                                      content: Text('تمت إعادة تعيين كلمة المرور بنجاح وتسجيل الدخول ✓'),
+                                      content: Text('Password reset — you are signed in'),
                                       backgroundColor: EpicColors.success,
                                     ),
                                   );
@@ -459,7 +459,7 @@ class _AuthScreenState extends State<AuthScreen> {
                       ),
                       child: saving
                           ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                          : const Text('حفظ كلمة المرور وتسجيل الدخول', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+                          : const Text('Save password and sign in', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
                     ),
                   ],
                 ),
@@ -526,7 +526,7 @@ class _AuthScreenState extends State<AuthScreen> {
                   ),
                   const SizedBox(height: 12),
                   Text(
-                    'أرسلنا رمز التحقق المكوّن من 6 أرقام إلى الرقم:\n$phone',
+                    'We sent a 6-digit code to:\n$phone',
                     style: const TextStyle(color: EpicColors.textSecondary, fontSize: 13, height: 1.5),
                   ),
                   if (devCode != null) ...[
@@ -539,7 +539,7 @@ class _AuthScreenState extends State<AuthScreen> {
                         border: Border.all(color: EpicColors.cyan.withOpacity(.4)),
                       ),
                       child: Text(
-                        'وضع التجربة (بوابة الرسائل غير مفعلة) — رمز التحقق: $devCode',
+                        'Test mode (SMS gateway disabled) — code: $devCode',
                         style: const TextStyle(color: EpicColors.cyan, fontSize: 12, fontWeight: FontWeight.w700),
                         textAlign: TextAlign.center,
                       ),
@@ -572,7 +572,7 @@ class _AuthScreenState extends State<AuthScreen> {
                         ? null
                         : () async {
                             if (otp.length < 6) {
-                              setModalState(() => sheetError = 'يرجى كتابة رمز التحقق المكوّن من 6 أرقام');
+                              setModalState(() => sheetError = 'Enter the 6-digit code');
                               return;
                             }
                             setModalState(() {
@@ -596,7 +596,7 @@ class _AuthScreenState extends State<AuthScreen> {
                     ),
                     child: verifying
                         ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                        : const Text('تأكيد ومتابعة', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+                        : const Text('Confirm and continue', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
                   ),
                 ],
               ),
@@ -656,7 +656,7 @@ class _AuthScreenState extends State<AuthScreen> {
                       ),
                       const SizedBox(height: 14),
                       Text(
-                        _isLogin ? 'تسجيل الدخول' : 'إنشاء حساب جديد',
+                        _isLogin ? 'Sign In' : 'Create Account',
                         style: const TextStyle(
                           color: EpicColors.textPrimary,
                           fontSize: 22,
@@ -666,8 +666,8 @@ class _AuthScreenState extends State<AuthScreen> {
                       const SizedBox(height: 6),
                       Text(
                         _isLogin
-                            ? 'أهلاً بعودتك! سجّل دخولك للوصول إلى ألعابك'
-                            : 'انضم إلى مجتمع FLUX STORE واحفظ تقدمك',
+                            ? 'Welcome back! Sign in to access your games'
+                            : 'Join FLUX GAMES and keep your progress',
                         style: const TextStyle(color: EpicColors.textSecondary, fontSize: 13),
                         textAlign: TextAlign.center,
                       ),
@@ -692,7 +692,7 @@ class _AuthScreenState extends State<AuthScreen> {
                     children: [
                       Expanded(
                         child: _tabButton(
-                          title: 'تسجيل الدخول',
+                          title: 'Sign In',
                           active: _isLogin,
                           onTap: () => setState(() {
                             _isLogin = true;
@@ -702,7 +702,7 @@ class _AuthScreenState extends State<AuthScreen> {
                       ),
                       Expanded(
                         child: _tabButton(
-                          title: 'إنشاء حساب',
+                          title: 'Create Account',
                           active: !_isLogin,
                           onTap: () => setState(() {
                             _isLogin = false;
@@ -751,11 +751,11 @@ class _AuthScreenState extends State<AuthScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('اسم اللاعب', style: TextStyle(color: EpicColors.textSecondary, fontSize: 12, fontWeight: FontWeight.w600)),
+                      const Text('Player Name', style: TextStyle(color: EpicColors.textSecondary, fontSize: 12, fontWeight: FontWeight.w600)),
                       const SizedBox(height: 6),
                       _inputBox(
                         controller: _nameController,
-                        hint: 'اسمك المستعار في المتجر',
+                        hint: 'Your nickname in the store',
                         icon: Icons.person_outline_rounded,
                       ),
                       const SizedBox(height: 14),
@@ -770,7 +770,7 @@ class _AuthScreenState extends State<AuthScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('رقم الهاتف', style: TextStyle(color: EpicColors.textSecondary, fontSize: 12, fontWeight: FontWeight.w600)),
+                    const Text('Phone Number', style: TextStyle(color: EpicColors.textSecondary, fontSize: 12, fontWeight: FontWeight.w600)),
                     const SizedBox(height: 6),
                     Row(
                       children: [
@@ -801,7 +801,7 @@ class _AuthScreenState extends State<AuthScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('كلمة المرور', style: TextStyle(color: EpicColors.textSecondary, fontSize: 12, fontWeight: FontWeight.w600)),
+                    const Text('Password', style: TextStyle(color: EpicColors.textSecondary, fontSize: 12, fontWeight: FontWeight.w600)),
                     const SizedBox(height: 6),
                     _inputBox(
                       controller: _passwordController,
@@ -823,7 +823,7 @@ class _AuthScreenState extends State<AuthScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('تأكيد كلمة المرور', style: TextStyle(color: EpicColors.textSecondary, fontSize: 12, fontWeight: FontWeight.w600)),
+                      const Text('Confirm Password', style: TextStyle(color: EpicColors.textSecondary, fontSize: 12, fontWeight: FontWeight.w600)),
                       const SizedBox(height: 6),
                       _inputBox(
                         controller: _confirmPasswordController,
@@ -848,7 +848,7 @@ class _AuthScreenState extends State<AuthScreen> {
                       onPressed: _startOtpLogin,
                       style: TextButton.styleFrom(padding: EdgeInsets.zero),
                       child: const Text(
-                        'دخول سريع عبر OTP',
+                        'Quick OTP sign in',
                         style: TextStyle(color: EpicColors.cyan, fontSize: 12, fontWeight: FontWeight.bold),
                       ),
                     ),
@@ -856,7 +856,7 @@ class _AuthScreenState extends State<AuthScreen> {
                       onPressed: _startForgotPassword,
                       style: TextButton.styleFrom(padding: EdgeInsets.zero),
                       child: const Text(
-                        'نسيت كلمة المرور؟',
+                        'Forgot your password?',
                         style: TextStyle(color: EpicColors.textSecondary, fontSize: 12),
                       ),
                     ),
@@ -884,7 +884,7 @@ class _AuthScreenState extends State<AuthScreen> {
                           child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                         )
                       : Text(
-                          _isLogin ? 'تسجيل الدخول' : 'المتابعة مع كود التحقق (OTP)',
+                          _isLogin ? 'Sign In' : 'Continue with OTP',
                           style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
                         ),
                 ),
@@ -897,7 +897,7 @@ class _AuthScreenState extends State<AuthScreen> {
                 child: TextButton(
                   onPressed: () => Navigator.of(context).pop(),
                   child: const Text(
-                    'تخطي والمتابعة كضيف',
+                    'Skip and continue as guest',
                     style: TextStyle(color: EpicColors.textSecondary, fontSize: 13),
                   ),
                 ),
