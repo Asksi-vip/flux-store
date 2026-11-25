@@ -329,7 +329,7 @@ class _SearchScreenState extends State<SearchScreen> {
   // ==================== Filter Modal بأسلوب Epic ====================
 
   void _showFilterSheet() {
-    String tempCategory = _category;
+    String? tempCategory = _category;
     String tempPrice = _priceFilter;
     bool tempDiscount = _discountedOnly;
     showModalBottomSheet<void>(

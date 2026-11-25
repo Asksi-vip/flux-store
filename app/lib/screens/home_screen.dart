@@ -263,7 +263,7 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  /// قسم FREE NOW بأسلوب Epic: شريط توهج أزرق + شارة FREE NOW بيضاء على الكروت.
+  /// قسم FREE NOW بأسلوب Epic: شريط توهج أزرق + شارة FREE NOW على الكروت.
   Widget _freeNowSection(List<Game> freeGames) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -383,8 +383,7 @@ class _HomeScreenState extends State<HomeScreen>
                             ),
                           ),
                         ),
-                      ),
-                    );
+                      );
                     },
                   ),
                 ),
@@ -466,9 +465,9 @@ class _HomeScreenState extends State<HomeScreen>
                                     color: EpicColors.blue.withOpacity(0.6),
                                   ),
                                 ),
-                                child: Row(
+                                child: const Row(
                                   mainAxisSize: MainAxisSize.min,
-                                  children: const [
+                                  children: [
                                     Icon(
                                       Icons.star_rounded,
                                       size: 11,
@@ -855,8 +854,8 @@ class _HomeScreenState extends State<HomeScreen>
           },
         ),
         const SizedBox(height: 24),
-        // صف اكتشاف إضافي: الأعلى تقييمًا في شبكة مصغرة
-        _sectionTitle('Editor\'s Picks', 'Hand-picked titles from the store'),
+        // صف اكتشاف إضافي: مختارات المتجر في شبكة مصغرة
+        _sectionTitle("Editor's Picks", 'Hand-picked titles from the store'),
         const SizedBox(height: 14),
         GridView.builder(
           padding: EdgeInsets.zero,
@@ -915,8 +914,7 @@ class _HomeScreenState extends State<HomeScreen>
       children: [
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: _sectionTitle(
-              'Browse by Genre', 'Explore the store by type'),
+          child: _sectionTitle('Browse by Genre', 'Explore the store by type'),
         ),
         const SizedBox(height: 14),
         Padding(
@@ -925,8 +923,7 @@ class _HomeScreenState extends State<HomeScreen>
             spacing: 8,
             runSpacing: 8,
             children: [
-              for (final String name in catNames)
-                _categoryChip(name, catValue),
+              for (final String name in catNames) _categoryChip(name, catValue),
             ],
           ),
         ),
